@@ -8,6 +8,8 @@ dependencies = [
     "markdownify>=1.2.3",
     "mineru[core]>=3.4.3",
     "pymupdf4llm>=1.28.0",
+    "qdrant-client>=1.18.0",
+    "sentence-transformers>=5.6.0",
 ]
 
 [dependency-groups]
