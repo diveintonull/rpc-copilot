@@ -304,6 +304,23 @@ def test_reranker_failure_falls_back_to_the_input_order() -> None:
     assert all(hit.rerank_score is None for hit in reranked)
 
 
+def test_reranker_strict_mode_propagates_failure_for_evaluation() -> None:
+    rerank = load_task9_module("rerank")
+    hits = [child_hit("a", "a", score=0.9)]
+
+    def failing_scorer(_query, _documents):
+        raise RuntimeError("reranker unavailable")
+
+    with pytest.raises(RuntimeError, match="reranker unavailable"):
+        rerank.rerank_hits(
+            "query",
+            hits,
+            limit=1,
+            scorer=failing_scorer,
+            strict=True,
+        )
+
+
 @pytest.mark.parametrize(
     "scores",
     [

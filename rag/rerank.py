@@ -49,8 +49,9 @@ def rerank_hits(
     *,
     limit: int,
     scorer: RerankScorer | None = None,
+    strict: bool = False,
 ) -> list[SearchHit]:
-    """Rerank candidates, falling back to their input order on scorer failure."""
+    """Rerank candidates; optionally expose failures to evaluation callers."""
     if limit < 0:
         raise ValueError("limit must be non-negative")
     if not hits or limit == 0:
@@ -64,6 +65,8 @@ def rerank_hits(
         if not all(math.isfinite(score) for score in scores):
             raise ValueError("reranker returned a non-finite score")
     except Exception:
+        if strict:
+            raise
         return hits[:limit]
 
     scored = [
