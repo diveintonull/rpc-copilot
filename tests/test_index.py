@@ -1,7 +1,9 @@
 """Tests for the indexing helpers and repeatable collection rebuild."""
 
 import json
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 from ingest.chunk import Chunk
 from ingest.chunk_parent import Section
@@ -44,6 +46,63 @@ def test_document_meta_for_does_not_repeat_gdpr_version_in_source_id():
     meta = document_meta_for(Path("CELEX_32016R0679_EN_TXT.md"), "regulation body")
 
     assert meta.document_id == "GDPR@2016-679"
+
+
+def test_bge_model_loader_passes_cuda_and_fp16(monkeypatch):
+    calls = {}
+
+    class FakeSentenceTransformer:
+        def __init__(self, model_path, **kwargs):
+            calls.update(model_path=model_path, **kwargs)
+
+    monkeypatch.setenv("EMBED_MODEL_SOURCE", "hf")
+    monkeypatch.setitem(
+        sys.modules,
+        "sentence_transformers",
+        SimpleNamespace(SentenceTransformer=FakeSentenceTransformer),
+    )
+    monkeypatch.setattr(
+        index_module, "select_model_device", lambda _name: "cuda", raising=False
+    )
+    monkeypatch.setattr(
+        index_module,
+        "model_kwargs_for",
+        lambda _device: {"dtype": "float16"},
+        raising=False,
+    )
+
+    index_module.get_model()
+
+    assert calls == {
+        "model_path": index_module.MODEL_NAME,
+        "device": "cuda",
+        "model_kwargs": {"dtype": "float16"},
+    }
+
+
+def test_bge_model_loader_passes_cpu_without_model_kwargs(monkeypatch):
+    calls = {}
+
+    class FakeSentenceTransformer:
+        def __init__(self, model_path, **kwargs):
+            calls.update(model_path=model_path, **kwargs)
+
+    monkeypatch.setenv("EMBED_MODEL_SOURCE", "hf")
+    monkeypatch.setitem(
+        sys.modules,
+        "sentence_transformers",
+        SimpleNamespace(SentenceTransformer=FakeSentenceTransformer),
+    )
+    monkeypatch.setattr(index_module, "select_model_device", lambda _name: "cpu")
+    monkeypatch.setattr(index_module, "model_kwargs_for", lambda _device: None)
+
+    index_module.get_model()
+
+    assert calls == {
+        "model_path": index_module.MODEL_NAME,
+        "device": "cpu",
+        "model_kwargs": None,
+    }
 
 
 class FakeVector(list):

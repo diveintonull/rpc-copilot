@@ -9,6 +9,7 @@ import math
 import os
 
 from rag.types import SearchHit
+from runtime.device import model_kwargs_for, select_model_device
 
 RERANK_MODEL_NAME = "BAAI/bge-reranker-v2-m3"
 RerankScorer = Callable[[str, list[str]], Sequence[float]]
@@ -24,10 +25,20 @@ def get_rerank_scorer() -> RerankScorer:
         from modelscope import snapshot_download
 
         model_path = snapshot_download(RERANK_MODEL_NAME)
-    model = CrossEncoder(model_path, max_length=512)
+    device = select_model_device("bge-reranker-v2-m3")
+    model = CrossEncoder(
+        model_path,
+        device=device,
+        max_length=512,
+        model_kwargs=model_kwargs_for(device),
+    )
 
     def score(query: str, documents: list[str]) -> Sequence[float]:
-        return model.predict([(query, document) for document in documents])
+        return model.predict(
+            [(query, document) for document in documents],
+            batch_size=4,
+            show_progress_bar=False,
+        )
 
     return score
 

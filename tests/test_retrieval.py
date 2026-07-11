@@ -343,13 +343,60 @@ def test_reranker_preserves_input_order_when_scores_tie() -> None:
 
 def test_real_reranker_caps_cross_encoder_input_at_512_tokens(monkeypatch) -> None:
     rerank = load_task9_module("rerank")
+    init_calls = {}
+    predict_calls = {}
+
+    class FakeCrossEncoder:
+        def __init__(self, model_path, **kwargs):
+            init_calls.update(model_path=model_path, **kwargs)
+
+        def predict(self, pairs, **kwargs):
+            predict_calls.update(pairs=pairs, **kwargs)
+            return [0.5]
+
+    monkeypatch.setenv("RERANK_MODEL_SOURCE", "hf")
+    monkeypatch.setitem(
+        sys.modules,
+        "sentence_transformers",
+        SimpleNamespace(CrossEncoder=FakeCrossEncoder),
+    )
+    monkeypatch.setattr(
+        rerank, "select_model_device", lambda _name: "cuda", raising=False
+    )
+    monkeypatch.setattr(
+        rerank,
+        "model_kwargs_for",
+        lambda _device: {"dtype": "float16"},
+        raising=False,
+    )
+    rerank.get_rerank_scorer.cache_clear()
+
+    scorer = rerank.get_rerank_scorer()
+    assert list(scorer("query", ["document"])) == [0.5]
+
+    assert init_calls == {
+        "model_path": "BAAI/bge-reranker-v2-m3",
+        "device": "cuda",
+        "max_length": 512,
+        "model_kwargs": {"dtype": "float16"},
+    }
+    assert predict_calls == {
+        "pairs": [("query", "document")],
+        "batch_size": 4,
+        "show_progress_bar": False,
+    }
+    rerank.get_rerank_scorer.cache_clear()
+
+
+def test_real_reranker_passes_cpu_without_model_kwargs(monkeypatch) -> None:
+    rerank = load_task9_module("rerank")
     calls = {}
 
     class FakeCrossEncoder:
         def __init__(self, model_path, **kwargs):
             calls.update(model_path=model_path, **kwargs)
 
-        def predict(self, _pairs):
+        def predict(self, _pairs, **_kwargs):
             return []
 
     monkeypatch.setenv("RERANK_MODEL_SOURCE", "hf")
@@ -358,13 +405,17 @@ def test_real_reranker_caps_cross_encoder_input_at_512_tokens(monkeypatch) -> No
         "sentence_transformers",
         SimpleNamespace(CrossEncoder=FakeCrossEncoder),
     )
+    monkeypatch.setattr(rerank, "select_model_device", lambda _name: "cpu")
+    monkeypatch.setattr(rerank, "model_kwargs_for", lambda _device: None)
     rerank.get_rerank_scorer.cache_clear()
 
     rerank.get_rerank_scorer()
 
     assert calls == {
         "model_path": "BAAI/bge-reranker-v2-m3",
+        "device": "cpu",
         "max_length": 512,
+        "model_kwargs": None,
     }
     rerank.get_rerank_scorer.cache_clear()
 

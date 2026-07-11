@@ -21,6 +21,7 @@ from pathlib import Path
 from ingest.chunk import Chunk
 from ingest.chunk_parent import PARSED, Section, build_parent_child
 from ingest.schema import DocumentMeta, content_sha256
+from runtime.device import model_kwargs_for, select_model_device
 
 # Per-document segmentation strategy (GB/T standards + GDPR are heading-numbered;
 # PRC statutes are article-numbered).
@@ -144,11 +145,20 @@ def get_model():
 
     from sentence_transformers import SentenceTransformer
 
+    device = select_model_device("bge-m3")
+    model_kwargs = model_kwargs_for(device)
+
     if os.environ.get("EMBED_MODEL_SOURCE", "modelscope") == "modelscope":
         from modelscope import snapshot_download
 
-        return SentenceTransformer(snapshot_download(MODEL_NAME))
-    return SentenceTransformer(MODEL_NAME)
+        model_path = snapshot_download(MODEL_NAME)
+    else:
+        model_path = MODEL_NAME
+    return SentenceTransformer(
+        model_path,
+        device=device,
+        model_kwargs=model_kwargs,
+    )
 
 
 def embed(model, texts: list[str]):

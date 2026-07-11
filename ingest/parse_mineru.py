@@ -5,8 +5,8 @@ we run MinerU's `pipeline` OCR backend and copy the resulting Markdown into
 data/parsed/, overwriting any garbled pymupdf output.
 
 Notes:
-* First run downloads ~300 MB of models from ModelScope (China-friendly mirror).
-* CPU-only, so a full standard takes several to ~20 minutes.
+* First run downloads models from ModelScope (China-friendly mirror).
+* CUDA is preferred; unavailable CUDA falls back to CPU with an explicit warning.
 * Rich output (md + page images + layout json) is kept under data/mineru/.
 
 Run: uv run python -m ingest.parse_mineru
@@ -20,12 +20,18 @@ import subprocess
 from pathlib import Path
 
 from ingest.parse import OCR_REQUIRED, OUT, RAW, count_headings
+from runtime.device import select_model_device
 
 WORK = Path("data/mineru")  # MinerU's rich output (md + images + json)
 
 
 def run_mineru(pdf: Path) -> Path:
-    env = {**os.environ, "MINERU_MODEL_SOURCE": "modelscope"}
+    device = select_model_device("mineru")
+    env = {
+        **os.environ,
+        "MINERU_MODEL_SOURCE": "modelscope",
+        "MINERU_DEVICE_MODE": device,
+    }
     subprocess.run(
         [
             "mineru", "-p", str(pdf), "-o", str(WORK),
