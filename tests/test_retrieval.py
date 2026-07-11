@@ -145,6 +145,32 @@ def test_dense_search_reuses_the_embedding_model(monkeypatch) -> None:
     assert loads == 1
 
 
+def test_dense_search_pushes_source_filter_to_qdrant(monkeypatch) -> None:
+    calls = {}
+
+    class Vector:
+        def tolist(self):
+            return [0.1]
+
+    class Client:
+        def query_points(self, _collection, **kwargs):
+            calls.update(kwargs)
+            return SimpleNamespace(points=[])
+
+    monkeypatch.setattr(dense, "get_model", lambda: object())
+    monkeypatch.setattr(dense, "embed", lambda _model, _texts: [Vector()])
+    monkeypatch.setattr(dense, "_client", lambda: Client())
+    dense._get_cached_model.cache_clear()
+
+    dense.search_dense("security", k=5, source_ids=["GDPR", "GBT-22239"])
+
+    dumped = calls["query_filter"].model_dump(exclude_none=True)
+    assert dumped["must"][0] == {
+        "key": "source_id",
+        "match": {"any": ["GDPR", "GBT-22239"]},
+    }
+
+
 def test_retrieve_uses_config_and_expands_parents(monkeypatch, tmp_path) -> None:
     parent_store = tmp_path / "parents.json"
     parent_store.write_text(
@@ -213,6 +239,53 @@ def test_sparse_search_recalls_a_no_space_chinese_clause() -> None:
     assert [hit.parent_id for hit in hits] == ["logging"]
     assert hits[0].sparse_rank == 1
     assert hits[0].score > 0
+
+
+def test_sparse_search_limits_candidates_to_requested_sources() -> None:
+    sparse = load_task9_module("sparse")
+    index = sparse.SparseIndex(
+        [
+            child_hit(
+                "gbt:0",
+                "gbt",
+                score=0.0,
+                text="安全 日志 保存",
+                source_id="GBT-22239",
+            ),
+            child_hit(
+                "gdpr:0",
+                "gdpr",
+                score=0.0,
+                text="安全 日志 保存",
+                source_id="GDPR",
+            ),
+            child_hit(
+                "backup:0",
+                "backup",
+                score=0.0,
+                text="异地 备份 恢复",
+                source_id="GBT-22239",
+            ),
+            child_hit(
+                "privacy:0",
+                "privacy",
+                score=0.0,
+                text="个人 信息 同意",
+                source_id="GDPR",
+            ),
+            child_hit(
+                "network:0",
+                "network",
+                score=0.0,
+                text="网络 边界 防护",
+                source_id="GBT-22239",
+            ),
+        ]
+    )
+
+    hits = index.search("安全日志", k=5, source_ids=["GDPR"])
+
+    assert [item.source_id for item in hits] == ["GDPR"]
 
 
 def test_sparse_index_treats_punctuation_only_corpus_as_empty() -> None:
@@ -523,6 +596,30 @@ def test_retrieve_runs_sparse_fusion_without_rerank(monkeypatch) -> None:
 
     assert calls == ["sparse:7", "fusion:3:dense:sparse"]
     assert hits == [fused_hit]
+
+
+def test_retrieve_passes_source_scope_to_dense_and_sparse(monkeypatch) -> None:
+    calls: list[tuple[str, list[str] | None]] = []
+
+    def fake_dense(_query, *, k, source_ids=None):
+        calls.append((f"dense:{k}", source_ids))
+        return []
+
+    def fake_sparse(_query, *, k, source_ids=None):
+        calls.append((f"sparse:{k}", source_ids))
+        return []
+
+    monkeypatch.setattr(retrieve_module, "search_dense", fake_dense)
+    monkeypatch.setattr(retrieve_module, "search_sparse", fake_sparse)
+
+    result = retrieve_module.retrieve(
+        "security",
+        RetrievalConfig(use_sparse=True, use_rerank=False, expand_parent=False),
+        source_ids=["GDPR"],
+    )
+
+    assert result == []
+    assert calls == [("dense:20", ["GDPR"]), ("sparse:20", ["GDPR"])]
 
 
 def test_retrieve_can_rerank_dense_children_without_parent_store(monkeypatch) -> None:

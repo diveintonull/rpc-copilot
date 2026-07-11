@@ -40,11 +40,22 @@ def expand_parent_hits(
     return expanded
 
 
-def retrieve(query: str, config: RetrievalConfig) -> list[SearchHit]:
+def retrieve(
+    query: str,
+    config: RetrievalConfig,
+    *,
+    source_ids: list[str] | None = None,
+) -> list[SearchHit]:
     """Run switchable Dense, Sparse, fusion, parent expansion, and reranking."""
-    dense_hits = search_dense(query, k=config.dense_k)
+    dense_kwargs = {"k": config.dense_k}
+    if source_ids is not None:
+        dense_kwargs["source_ids"] = source_ids
+    dense_hits = search_dense(query, **dense_kwargs)
     if config.use_sparse:
-        sparse_hits = search_sparse(query, k=config.sparse_k)
+        sparse_kwargs = {"k": config.sparse_k}
+        if source_ids is not None:
+            sparse_kwargs["source_ids"] = source_ids
+        sparse_hits = search_sparse(query, **sparse_kwargs)
         candidates = reciprocal_rank_fusion(
             dense_hits, sparse_hits, limit=config.fused_k
         )
