@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from html import escape
+
 from agent.state import AgentState
 from rag.citations import EntailmentEvaluator, validate_citations
 
@@ -25,6 +27,50 @@ GAP_ANALYSIS_UNSAFE_CLAIMS = (
     "the enterprise is compliant",
     "the enterprise is illegal",
 )
+EVIDENCE_START = "<evidence>"
+EVIDENCE_END = "</evidence>"
+
+
+def _evidence_key(item: dict) -> tuple[object, object, object]:
+    return (
+        item.get("source_id"),
+        item.get("version"),
+        item.get("section_number"),
+    )
+
+
+def _bound_evidence_item(item: dict) -> dict:
+    bounded = dict(item)
+    text = bounded.get("text")
+    if isinstance(text, str):
+        safe_text = escape(text, quote=False)
+        bounded["text"] = (
+            f"{EVIDENCE_START}\n{safe_text}\n{EVIDENCE_END}"
+        )
+    return bounded
+
+
+def _bound_evidence(evidence: list[dict]) -> list[dict]:
+    return [_bound_evidence_item(item) for item in evidence]
+
+
+def _restore_gap_evidence(
+    gap_matrix: list[dict],
+    regulation_evidence: list[dict],
+) -> list[dict]:
+    raw_by_key = {
+        _evidence_key(item): item for item in regulation_evidence
+    }
+    restored = []
+    for row in gap_matrix:
+        restored_row = dict(row)
+        restored_row["evidence"] = [
+            raw_by_key[key]
+            for item in row.get("evidence", [])
+            if (key := _evidence_key(item)) in raw_by_key
+        ]
+        restored.append(restored_row)
+    return restored
 
 
 def format_gap_matrix(gap_matrix: list[dict]) -> str:
@@ -95,7 +141,7 @@ def execute_regulation_qa(state: AgentState, tools, llm) -> dict:
     }
 
     if evidence:
-        answer = llm.answer_regulation(query, evidence)
+        answer = llm.answer_regulation(query, _bound_evidence(evidence))
     else:
         answer = "insufficient regulation evidence"
 
@@ -144,7 +190,12 @@ def execute_clause_comparison(state: AgentState, tools, llm) -> dict:
     }
 
     if left_found and right_found:
-        answer = llm.answer_comparison(query, comparison)
+        bounded_comparison = {
+            "left": _bound_evidence_item(left_evidence),
+            "right": _bound_evidence_item(right_evidence),
+            "dimensions": comparison["dimensions"],
+        }
+        answer = llm.answer_comparison(query, bounded_comparison)
     else:
         answer = "incomplete comparison evidence"
 
@@ -186,7 +237,15 @@ def execute_gap_analysis(state: AgentState, tools, llm) -> dict:
     }
 
     if regulation_evidence:
-        gap_matrix = llm.map_gaps(query, controls, regulation_evidence)
+        generated_gap_matrix = llm.map_gaps(
+            query,
+            controls,
+            _bound_evidence(regulation_evidence),
+        )
+        gap_matrix = _restore_gap_evidence(
+            generated_gap_matrix,
+            regulation_evidence,
+        )
     else:
         gap_matrix = []
 
@@ -218,6 +277,72 @@ def execute_unsupported(state: AgentState, tools) -> dict:
         "answer": "unsupported request",
         "trace": state["trace"] + [{"node": "execute_unsupported"}],
     }
+
+
+def check_cancel(state: AgentState, is_cancelled, node_name: str) -> dict:
+    """Record an external cancellation decision at one graph boundary."""
+    request_id = state.get("request_id", "")
+    cancelled = bool(is_cancelled(request_id))
+    update = {
+        "trace": state["trace"] + [
+            {"node": node_name, "cancelled": cancelled}
+        ]
+    }
+    if cancelled:
+        update["final_status"] = "cancelled"
+    return update
+
+
+def select_after_pre_workflow_cancel(state: AgentState) -> str:
+    """Dispatch a workflow unless cancellation already won the race."""
+    if state.get("final_status") == "cancelled":
+        return "finish"
+    return select_workflow(state)
+
+
+def select_after_post_workflow_cancel(state: AgentState) -> str:
+    """Skip verification when cancellation arrives after a workflow."""
+    if state.get("final_status") == "cancelled":
+        return "finish"
+    return "verify"
+
+
+def prepare_retry(state: AgentState, llm) -> dict:
+    """Rewrite the query once and clear transient generation state."""
+    failures = []
+    if state.get("trace"):
+        failures = state["trace"][-1].get("citation_failures", [])
+    query = state["query"]
+    rewritten_query = llm.rewrite_query(query, failures).strip()
+    if not rewritten_query:
+        rewritten_query = query
+    retry_count = state.get("retry_count", 0) + 1
+    return {
+        "query": rewritten_query,
+        "answer": "",
+        "evidence": [],
+        "citations_valid": False,
+        "retry_count": retry_count,
+        "trace": state["trace"] + [
+            {
+                "node": "prepare_retry",
+                "retry_count": retry_count,
+                "query": rewritten_query,
+            }
+        ],
+    }
+
+
+def select_after_verify(state: AgentState) -> str:
+    """Pass, retry once, or refuse after deterministic verification."""
+    if state.get("citations_valid"):
+        return "finish"
+    if (
+        state.get("intent") != "unsupported"
+        and state.get("retry_count", 0) < 1
+    ):
+        return "prepare_retry"
+    return "finish"
 
 
 def verify(
@@ -295,8 +420,11 @@ def verify(
 
 def finish(state: AgentState) -> dict:
     """Return the final status update and terminal trace event."""
-    citations_valid = state["citations_valid"]
-    final_status = "completed" if citations_valid else "refused"
+    if state.get("final_status") == "cancelled":
+        final_status = "cancelled"
+    else:
+        citations_valid = state["citations_valid"]
+        final_status = "completed" if citations_valid else "refused"
 
     return {
         "final_status": final_status,
