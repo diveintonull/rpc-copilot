@@ -154,6 +154,19 @@ class FakeLLM:
         )
         return list(self.gap_matrix)
 
+
+class FakeEntailmentEvaluator:
+    """Return a configured support decision and record evaluated evidence."""
+
+    def __init__(self, supported: bool) -> None:
+        self.supported = supported
+        self.calls: list[dict] = []
+
+    def __call__(self, claim: str, evidence: dict) -> bool:
+        self.calls.append({"claim": claim, "evidence": evidence})
+        return self.supported
+
+
 @pytest.fixture
 def fake_tools() -> FakeTools:
     return FakeTools()
@@ -886,6 +899,96 @@ def test_graph_refuses_comparison_with_one_missing_side() -> None:
     assert result["citations_valid"] is False
     assert result["final_status"] == "refused"
     assert llm.comparison_answer_calls == []
+
+
+def test_graph_records_supported_citation_validation_in_trace() -> None:
+    evidence = {
+        "parent_id": "GBT-22239@2019#8.1.4.1",
+        "source_id": "GBT-22239",
+        "version": "2019",
+        "section_number": "8.1.4.1",
+        "text": "应采用两种或两种以上组合的鉴别技术。",
+        "score": 0.91,
+    }
+    tools = FakeTools(search_results=[evidence])
+    llm = FakeLLM(answer="管理员应采用组合身份鉴别技术[1]。")
+    evaluator = FakeEntailmentEvaluator(supported=True)
+    graph = build_graph(
+        lambda _query, _control_text: "regulation_qa",
+        tools,
+        llm,
+        entailment_evaluator=evaluator,
+    )
+
+    result = graph.invoke(
+        {
+            "request_id": "req-supported-citation",
+            "query": "管理员身份鉴别有什么要求？",
+            "control_text": "",
+            "tool_calls": [],
+            "trace": [{"node": "received"}],
+        }
+    )
+
+    assert result["citations_valid"] is True
+    assert result["final_status"] == "completed"
+    assert result["trace"][-2] == {
+        "node": "verify",
+        "citations_valid": True,
+        "citation_failures": [],
+        "validation_action": "pass",
+    }
+    assert evaluator.calls == [
+        {
+            "claim": "管理员应采用组合身份鉴别技术",
+            "evidence": evidence,
+        }
+    ]
+
+
+def test_graph_refuses_unsupported_citation_and_records_reason() -> None:
+    evidence = {
+        "parent_id": "GBT-22239@2019#8.1.4.1",
+        "source_id": "GBT-22239",
+        "version": "2019",
+        "section_number": "8.1.4.1",
+        "text": "应采用两种或两种以上组合的鉴别技术。",
+        "score": 0.91,
+    }
+    tools = FakeTools(search_results=[evidence])
+    llm = FakeLLM(answer="管理员必须每天更换密码[1]。")
+    evaluator = FakeEntailmentEvaluator(supported=False)
+    graph = build_graph(
+        lambda _query, _control_text: "regulation_qa",
+        tools,
+        llm,
+        entailment_evaluator=evaluator,
+    )
+
+    result = graph.invoke(
+        {
+            "request_id": "req-unsupported-citation",
+            "query": "管理员密码有什么要求？",
+            "control_text": "",
+            "tool_calls": [],
+            "trace": [{"node": "received"}],
+        }
+    )
+
+    assert result["citations_valid"] is False
+    assert result["final_status"] == "refused"
+    assert result["trace"][-2] == {
+        "node": "verify",
+        "citations_valid": False,
+        "citation_failures": [
+            {
+                "code": "unsupported_claim",
+                "claim": "管理员必须每天更换密码",
+                "citation": 1,
+            }
+        ],
+        "validation_action": "refuse",
+    }
 
 
 @pytest.mark.parametrize(

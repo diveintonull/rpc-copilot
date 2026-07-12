@@ -29,7 +29,13 @@ def create_graph_builder() -> StateGraph:
     return StateGraph(AgentState)
 
 
-def build_graph(classify_intent, tools, llm) -> Any:
+def build_graph(
+    classify_intent,
+    tools,
+    llm,
+    *,
+    entailment_evaluator=None,
+) -> Any:
     """Build the compiled routing graph from injected runtime dependencies."""
     builder = create_graph_builder()
     route_node = partial(route_intent, classify_intent=classify_intent)
@@ -49,13 +55,17 @@ def build_graph(classify_intent, tools, llm) -> Any:
         tools=tools,
         llm=llm,
     )
+    verify_node = partial(
+        verify,
+        entailment_evaluator=entailment_evaluator,
+    )
 
     builder.add_node("route_intent", route_node)
     builder.add_node("execute_regulation_qa", regulation_qa_node)
     builder.add_node("execute_clause_comparison", comparison_node)
     builder.add_node("execute_gap_analysis", gap_analysis_node)
     builder.add_node("execute_unsupported", unsupported_node)
-    builder.add_node("verify", verify)
+    builder.add_node("verify", verify_node)
     builder.add_node("finish", finish)
 
     builder.add_edge(START, "route_intent")

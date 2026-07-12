@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from agent.state import AgentState
+from rag.citations import EntailmentEvaluator, validate_citations
 
 
 GAP_MATRIX_FIELDS = (
@@ -219,11 +220,15 @@ def execute_unsupported(state: AgentState, tools) -> dict:
     }
 
 
-def verify(state: AgentState) -> dict:
+def verify(
+    state: AgentState,
+    entailment_evaluator: EntailmentEvaluator | None = None,
+) -> dict:
     """Return the deterministic verification update for a routed request."""
     intent = state["intent"]
     evidence = state.get("evidence", [])
     has_unsafe_claim = False
+    citation_failures = []
 
     if intent == "regulation_qa":
         citations_valid = bool(evidence)
@@ -249,14 +254,39 @@ def verify(state: AgentState) -> dict:
     else:
         citations_valid = False
 
+    if (
+        entailment_evaluator is not None
+        and intent in {"regulation_qa", "clause_comparison"}
+        and citations_valid
+    ):
+        validation = validate_citations(
+            state.get("answer", ""),
+            evidence,
+            entailment_evaluator=entailment_evaluator,
+        )
+        citations_valid = validation["valid"]
+        citation_failures = validation["failures"]
+
+    trace_event = {
+        "node": "verify",
+        "citations_valid": citations_valid,
+    }
+    if (
+        entailment_evaluator is not None
+        and intent in {"regulation_qa", "clause_comparison"}
+    ):
+        trace_event.update(
+            {
+                "citation_failures": citation_failures,
+                "validation_action": (
+                    "pass" if citations_valid else "refuse"
+                ),
+            }
+        )
+
     update = {
         "citations_valid": citations_valid,
-        "trace": state["trace"] + [
-            {
-                "node": "verify",
-                "citations_valid": citations_valid,
-            }
-        ],
+        "trace": state["trace"] + [trace_event],
     }
     if intent == "gap_analysis" and has_unsafe_claim:
         update["answer"] = GAP_ANALYSIS_OVERCLAIM_REFUSAL
