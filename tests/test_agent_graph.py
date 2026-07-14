@@ -578,6 +578,7 @@ def test_graph_injects_dependencies_into_regulation_qa() -> None:
         {
             "query": result["query"],
             "evidence": [bounded_evidence_item(evidence[0])],
+            "skill_text": result["skill_text"],
         }
     ]
 
@@ -617,6 +618,7 @@ def test_graph_injects_dependencies_into_clause_comparison() -> None:
                 "right": bounded_evidence_item(comparison["right"]),
                 "dimensions": comparison["dimensions"],
             },
+            "skill_text": result["skill_text"],
         }
     ]
 
@@ -1474,6 +1476,47 @@ def test_retry_reuses_loaded_skill_without_loading_body_again(
     assert tokenizer.calls.count(skill_body) == 1
     assert result["retry_count"] == 1
     assert result["final_status"] == "completed"
+
+
+@pytest.mark.parametrize(
+    ("intent", "expected_skill", "control_text"),
+    [
+        ("regulation_qa", "regulation-qa", ""),
+        ("clause_comparison", "clause-comparison", ""),
+        ("gap_analysis", "gap-analysis", ""),
+    ],
+)
+def test_real_domain_skill_loads_before_boundary_refusal(
+    intent: str,
+    expected_skill: str,
+    control_text: str,
+) -> None:
+    catalog = discover_skills(Path("skills"))
+    graph = build_graph(
+        lambda _query, _control_text: intent,
+        FakeTools(),
+        FakeLLM(),
+        skill_catalog=catalog,
+    )
+
+    result = graph.invoke(
+        {
+            "request_id": f"req-real-skill-boundary-{intent}",
+            "query": f"boundary request for {intent}",
+            "control_text": control_text,
+            "retry_count": 1,
+            "trace": [{"node": "received"}],
+        }
+    )
+
+    assert result["active_skill"] == expected_skill
+    assert result["skill_text"].strip()
+    assert result["final_status"] == "refused"
+    assert next(
+        event
+        for event in result["trace"]
+        if event["node"] == "load_skill"
+    )["loaded"] is True
 
 
 def test_graph_sets_explicit_maximum_step_limit() -> None:

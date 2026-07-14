@@ -240,3 +240,64 @@ def test_skill_nodes_load_each_supported_intent_with_token_trace(
         "body_tokens": len(body.split()),
         "resource_tokens": 0,
     }
+
+
+@pytest.mark.parametrize(
+    ("trigger_intent", "skill_name", "non_trigger_intent"),
+    [
+        ("regulation_qa", "regulation-qa", "clause_comparison"),
+        (
+            "clause_comparison",
+            "clause-comparison",
+            "gap_analysis",
+        ),
+        ("gap_analysis", "gap-analysis", "regulation_qa"),
+    ],
+)
+def test_real_domain_skill_trigger_and_non_trigger_contracts(
+    trigger_intent: str,
+    skill_name: str,
+    non_trigger_intent: str,
+) -> None:
+    catalog = discover_skills(Path("skills"))
+
+    assert match_skill(trigger_intent, catalog) == skill_name
+    assert match_skill(non_trigger_intent, catalog) != skill_name
+    description = catalog.entries[skill_name].description.casefold()
+    assert "use for" in description
+    assert "do not use" in description
+
+
+@pytest.mark.parametrize(
+    ("skill_name", "required_boundary_rules"),
+    [
+        (
+            "regulation-qa",
+            ("cite every factual claim", "version conflict", "refuse"),
+        ),
+        (
+            "clause-comparison",
+            ("both sides", "left", "right", "refuse"),
+        ),
+        (
+            "gap-analysis",
+            (
+                "aligned",
+                "partial",
+                "unknown",
+                "human confirmation",
+                "do not declare",
+            ),
+        ),
+    ],
+)
+def test_real_domain_skill_documents_boundary_rules(
+    skill_name: str,
+    required_boundary_rules: tuple[str, ...],
+) -> None:
+    catalog = discover_skills(Path("skills"))
+
+    body = load_skill(skill_name, catalog).text.casefold()
+
+    for rule in required_boundary_rules:
+        assert rule in body
