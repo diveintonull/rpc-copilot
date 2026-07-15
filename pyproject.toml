@@ -8,6 +8,7 @@ dependencies = [
     "jieba>=0.42.1",
     "langgraph>=1.2.9",
     "markdownify>=1.2.3",
+    "mcp>=1.28.1",
     "mineru[core]>=3.4.3",
     "openai>=2.44.0",
     "pymupdf4llm>=1.28.0",
