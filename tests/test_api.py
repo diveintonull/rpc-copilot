@@ -282,3 +282,85 @@ def test_chat_rejects_blank_query_before_starting_task() -> None:
 
     assert response.status_code == 422
     assert app.state.task_manager.active_count == 0
+
+
+def test_chat_passes_selected_work_mode_and_control_text_to_runner() -> None:
+    received = []
+
+    async def runner(request) -> dict:
+        received.append(
+            {
+                "mode": request.mode,
+                "query": request.query,
+                "control_text": request.control_text,
+            }
+        )
+        return {
+            "answer": "需要人工确认差距分析结果。",
+            "evidence": [],
+            "trace": [],
+            "final_status": "refused",
+        }
+
+    app = create_app(agent_runner=runner)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/chat",
+            json={
+                "request_id": "req-gap-mode",
+                "mode": "gap_analysis",
+                "query": "检查身份鉴别控制差距",
+                "control_text": "管理员当前只使用密码登录。",
+            },
+        )
+
+    assert response.status_code == 200
+    assert received == [
+        {
+            "mode": "gap_analysis",
+            "query": "检查身份鉴别控制差距",
+            "control_text": "管理员当前只使用密码登录。",
+        }
+    ]
+    assert parse_sse(response.text)[-1]["data"]["status"] == "refused"
+
+
+def test_frontend_static_assets_are_served_with_required_workspaces() -> None:
+    app = create_app()
+
+    with TestClient(app) as client:
+        page = client.get("/")
+        javascript = client.get("/app.js")
+        stylesheet = client.get("/styles.css")
+
+    assert page.status_code == 200
+    assert page.headers["content-type"].startswith("text/html")
+    assert javascript.status_code == 200
+    assert javascript.headers["content-type"].startswith(
+        ("text/javascript", "application/javascript")
+    )
+    assert stylesheet.status_code == 200
+    assert stylesheet.headers["content-type"].startswith("text/css")
+
+    html = page.text
+    for mode in (
+        "regulation_qa",
+        "clause_comparison",
+        "gap_analysis",
+    ):
+        assert f'data-mode="{mode}"' in html
+    for element_id in (
+        "chat-timeline",
+        "evidence-list",
+        "trace-list",
+        "stop-button",
+    ):
+        assert f'id="{element_id}"' in html
+
+    assert "SSEFrameParser" in javascript.text
+    assert "StreamSession" in javascript.text
+    assert "runContractSelfTests" in javascript.text
+    assert 'const TRACE_FIELDS = ["node", "tool", "duration_ms", "status"]' in (
+        javascript.text
+    )

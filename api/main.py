@@ -5,11 +5,13 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
-from typing import Any
+from pathlib import Path
+from typing import Any, Literal
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
 from api.events import SSEEvent, encode_sse, make_event
@@ -17,6 +19,12 @@ from api.task_manager import DuplicateTaskError, TaskManager
 
 
 DEFAULT_TEXT_CHUNK_SIZE = 24
+WEB_DIRECTORY = Path(__file__).resolve().parents[1] / "web"
+WorkMode = Literal[
+    "regulation_qa",
+    "clause_comparison",
+    "gap_analysis",
+]
 REFERENCE_FIELDS = {
     "parent_id",
     "source_id",
@@ -31,6 +39,7 @@ class ChatRequest(BaseModel):
     """Validated input for one streamed Agent request."""
 
     request_id: str | None = None
+    mode: WorkMode = "regulation_qa"
     query: str = Field(min_length=1)
     control_text: str = ""
 
@@ -321,6 +330,12 @@ def create_app(
         if not await manager.stop(request_id):
             raise HTTPException(status_code=404, detail="task not found")
         return {"request_id": request_id, "status": "cancelled"}
+
+    application.mount(
+        "/",
+        StaticFiles(directory=WEB_DIRECTORY, html=True),
+        name="web",
+    )
 
     return application
 

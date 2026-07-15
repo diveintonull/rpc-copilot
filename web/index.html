@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta
+      name="description"
+      content="可观察、可引用、可停止的 GRC Agent 演示界面"
+    >
+    <title>GRC Copilot · 可观察合规助手</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#chat-composer">跳到提问区</a>
+
+    <header class="topbar">
+      <div class="brand-block">
+        <div class="brand-mark" aria-hidden="true">GC</div>
+        <div>
+          <p class="eyebrow">OBSERVABLE GRC WORKSPACE</p>
+          <h1>GRC Copilot</h1>
+        </div>
+      </div>
+
+      <div class="topbar-status" aria-label="服务状态">
+        <span class="health-dot" id="health-dot" aria-hidden="true"></span>
+        <span id="health-label">正在检查服务</span>
+        <span class="status-divider" aria-hidden="true"></span>
+        <span id="request-label">尚未运行</span>
+      </div>
+    </header>
+
+    <main class="app-shell">
+      <aside class="mode-rail" aria-labelledby="mode-title">
+        <div class="rail-heading">
+          <p class="section-kicker">工作模式</p>
+          <h2 id="mode-title">选择任务</h2>
+          <p>模式只准备输入；最终判断仍由 Agent 和证据完成。</p>
+        </div>
+
+        <div class="mode-list" role="list">
+          <button
+            class="mode-card is-active"
+            type="button"
+            data-mode="regulation_qa"
+            aria-pressed="true"
+          >
+            <span class="mode-index">01</span>
+            <span class="mode-copy">
+              <strong>法规问答</strong>
+              <small>从版本化条款回答一个法规问题</small>
+            </span>
+          </button>
+
+          <button
+            class="mode-card"
+            type="button"
+            data-mode="clause_comparison"
+            aria-pressed="false"
+          >
+            <span class="mode-index">02</span>
+            <span class="mode-copy">
+              <strong>条款比较</strong>
+              <small>保留左右证据并解释确定差异</small>
+            </span>
+          </button>
+
+          <button
+            class="mode-card"
+            type="button"
+            data-mode="gap_analysis"
+            aria-pressed="false"
+          >
+            <span class="mode-index">03</span>
+            <span class="mode-copy">
+              <strong>控制差距</strong>
+              <small>把当前控制与法规证据建立映射</small>
+            </span>
+          </button>
+        </div>
+
+        <section class="mode-guide" aria-labelledby="mode-guide-title">
+          <div class="guide-icon" aria-hidden="true">i</div>
+          <div>
+            <h3 id="mode-guide-title">当前模式</h3>
+            <p id="mode-description">
+              提出一个法规问题，回答中的事实应绑定右侧证据。
+            </p>
+          </div>
+        </section>
+      </aside>
+
+      <section class="chat-workspace" aria-labelledby="workspace-title">
+        <div class="workspace-heading">
+          <div>
+            <p class="section-kicker">对话</p>
+            <h2 id="workspace-title">证据驱动的工作区</h2>
+          </div>
+          <div class="connection-pill" id="connection-pill" data-state="idle">
+            <span class="connection-pulse" aria-hidden="true"></span>
+            <span id="connection-label">等待提问</span>
+          </div>
+        </div>
+
+        <div
+          class="selftest-banner"
+          id="selftest-banner"
+          role="status"
+          hidden
+        ></div>
+
+        <div
+          class="chat-timeline"
+          id="chat-timeline"
+          aria-live="polite"
+          aria-label="对话记录"
+        >
+          <article class="message message-assistant message-intro">
+            <div class="message-avatar" aria-hidden="true">AI</div>
+            <div class="message-body">
+              <p class="message-role">GRC Copilot</p>
+              <div class="message-content">
+                <p>
+                  选择左侧模式后提问。我会把回答、法规证据和可观察
+                  Trace 分开展示；回答中的 <span class="citation-sample">[1]</span>
+                  可以定位右侧证据。
+                </p>
+              </div>
+            </div>
+          </article>
+        </div>
+
+        <section
+          class="recommendation-strip"
+          id="recommendation-section"
+          aria-labelledby="recommendation-title"
+          hidden
+        >
+          <div class="recommendation-heading">
+            <span aria-hidden="true">↗</span>
+            <h3 id="recommendation-title">建议</h3>
+          </div>
+          <div id="recommendation-list" class="recommendation-list"></div>
+        </section>
+
+        <div class="example-row" aria-label="示例问题">
+          <span>示例</span>
+          <div id="example-list" class="example-list"></div>
+        </div>
+
+        <form class="chat-composer" id="chat-composer">
+          <label for="query-input">你的问题</label>
+          <textarea
+            id="query-input"
+            name="query"
+            rows="3"
+            placeholder="例如：管理员身份鉴别有哪些要求？"
+            required
+          ></textarea>
+
+          <div class="control-input" id="control-input-group" hidden>
+            <label for="control-input">企业当前控制描述</label>
+            <textarea
+              id="control-input"
+              name="control_text"
+              rows="4"
+              placeholder="例如：管理员目前仅使用账号和密码登录，尚未启用多因素认证。"
+            ></textarea>
+            <p>只描述当前事实，不要预先判断是否合规。</p>
+          </div>
+
+          <div class="composer-actions">
+            <p class="composer-hint">Ctrl / ⌘ + Enter 发送</p>
+            <div class="button-group">
+              <button
+                class="button button-secondary"
+                id="stop-button"
+                type="button"
+                disabled
+              >
+                停止
+              </button>
+              <button class="button button-primary" id="send-button" type="submit">
+                <span>发送请求</span>
+                <span aria-hidden="true">→</span>
+              </button>
+            </div>
+          </div>
+        </form>
+      </section>
+
+      <aside class="context-dock" aria-label="证据与执行信息">
+        <div class="dock-tabs" role="tablist" aria-label="上下文面板">
+          <button
+            class="dock-tab is-active"
+            id="evidence-tab"
+            type="button"
+            role="tab"
+            aria-selected="true"
+            aria-controls="evidence-panel"
+            data-panel="evidence"
+          >
+            证据 <span id="evidence-count">0</span>
+          </button>
+          <button
+            class="dock-tab"
+            id="trace-tab"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            aria-controls="trace-panel"
+            data-panel="trace"
+          >
+            Trace <span id="trace-count">0</span>
+          </button>
+        </div>
+
+        <section
+          class="dock-panel"
+          id="evidence-panel"
+          role="tabpanel"
+          aria-labelledby="evidence-tab"
+        >
+          <div class="panel-heading">
+            <div>
+              <p class="section-kicker">REFERENCES</p>
+              <h2>法规证据</h2>
+            </div>
+            <p>引用按到达顺序编号，保留来源与版本。</p>
+          </div>
+          <div class="empty-state" id="evidence-empty">
+            <span aria-hidden="true">⌁</span>
+            <strong>尚无证据</strong>
+            <p>运行请求后，引用会出现在这里。</p>
+          </div>
+          <div class="evidence-list" id="evidence-list"></div>
+        </section>
+
+        <section
+          class="dock-panel"
+          id="trace-panel"
+          role="tabpanel"
+          aria-labelledby="trace-tab"
+          hidden
+        >
+          <div class="panel-heading">
+            <div>
+              <p class="section-kicker">OBSERVABILITY</p>
+              <h2>执行 Trace</h2>
+            </div>
+            <p>只展示节点、工具、耗时和状态，不展示隐藏推理。</p>
+          </div>
+          <div class="empty-state" id="trace-empty">
+            <span aria-hidden="true">···</span>
+            <strong>尚无执行事件</strong>
+            <p>Agent 的可观察步骤会按顺序显示。</p>
+          </div>
+          <ol class="trace-list" id="trace-list"></ol>
+        </section>
+      </aside>
+    </main>
+
+    <div class="sr-only" id="live-announcer" aria-live="assertive"></div>
+  </body>
+</html>
