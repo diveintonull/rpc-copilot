@@ -10,7 +10,14 @@ import pytest
 
 from agent import tools as tools_module
 from agent.state import AgentState
-from agent.tools import search_regulation
+from agent.tools import (
+    LocalToolBackend,
+    MCPBackendUnavailableError,
+    MCPToolBackend,
+    MCPToolError,
+    create_tool_backend,
+    search_regulation,
+)
 from rag.types import SearchHit
 
 
@@ -468,3 +475,156 @@ def test_tool_core_has_no_llm_or_langgraph_dependency() -> None:
     assert "openai" not in source
     assert "langgraph" not in source
     assert "llm" not in parameters
+
+
+def test_local_and_mcp_backends_return_the_same_domain_structures() -> None:
+    clause = {
+        "parent_id": "GBT-22239@2019#7.1.4.1",
+        "source_id": "GBT-22239",
+        "version": "2019",
+        "section_number": "7.1.4.1",
+        "text": "应对登录用户进行身份鉴别。",
+        "score": 0.91,
+    }
+    comparison = {
+        "left": clause,
+        "right": None,
+        "dimensions": ["scope"],
+    }
+    left_ref = {
+        "source_id": "GBT-22239",
+        "version": "2019",
+        "section_number": "7.1.4.1",
+    }
+    right_ref = {
+        "source_id": "GDPR",
+        "version": "2016-679",
+        "section_number": "32",
+    }
+    local = LocalToolBackend(
+        search_tool=lambda _query, _source_ids: [clause],
+        clause_tool=lambda _source_id, _version, _section: clause,
+        comparison_tool=lambda _left, _right, _dimensions: comparison,
+    )
+    mcp_calls: list[tuple[str, dict]] = []
+
+    def call_mcp_tool(name: str, arguments: dict) -> dict:
+        mcp_calls.append((name, arguments))
+        data = {
+            "search_regulation": [clause],
+            "get_clause": clause,
+            "compare_clauses": comparison,
+        }[name]
+        return {"ok": True, "data": data, "error": None}
+
+    mcp = MCPToolBackend(call_mcp_tool=call_mcp_tool)
+
+    local_results = {
+        "search": local.search_regulation("身份鉴别", ["GBT-22239"]),
+        "get": local.get_clause("GBT-22239", "2019", "7.1.4.1"),
+        "compare": local.compare_clauses(
+            left_ref,
+            right_ref,
+            ["scope"],
+        ),
+    }
+    mcp_results = {
+        "search": mcp.search_regulation("身份鉴别", ["GBT-22239"]),
+        "get": mcp.get_clause("GBT-22239", "2019", "7.1.4.1"),
+        "compare": mcp.compare_clauses(
+            left_ref,
+            right_ref,
+            ["scope"],
+        ),
+    }
+
+    assert mcp_results == local_results
+    assert mcp_calls == [
+        (
+            "search_regulation",
+            {"query": "身份鉴别", "source_ids": ["GBT-22239"]},
+        ),
+        (
+            "get_clause",
+            {
+                "source_id": "GBT-22239",
+                "version": "2019",
+                "section_number": "7.1.4.1",
+            },
+        ),
+        (
+            "compare_clauses",
+            {
+                "left": left_ref,
+                "right": right_ref,
+                "dimensions": ["scope"],
+            },
+        ),
+    ]
+
+
+def test_mcp_backend_unavailable_is_explicit_and_never_falls_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def local_must_not_run(*_args, **_kwargs):
+        raise AssertionError("MCP mode must not fall back to local tools")
+
+    def unavailable_mcp(_name: str, _arguments: dict) -> dict:
+        raise ConnectionError("server process exited")
+
+    monkeypatch.setattr(tools_module, "search_regulation", local_must_not_run)
+    backend = MCPToolBackend(call_mcp_tool=unavailable_mcp)
+
+    with pytest.raises(
+        MCPBackendUnavailableError,
+        match=r"mcp backend unavailable.*search_regulation.*server process exited",
+    ):
+        backend.search_regulation("身份鉴别")
+
+
+def test_mcp_backend_preserves_structured_tool_error() -> None:
+    backend = MCPToolBackend(
+        call_mcp_tool=lambda _name, _arguments: {
+            "ok": False,
+            "data": None,
+            "error": {
+                "code": "invalid_argument",
+                "message": "query must not be blank",
+                "details": {"exception": "ValueError"},
+            },
+        }
+    )
+
+    with pytest.raises(MCPToolError) as error_info:
+        backend.search_regulation("   ")
+
+    assert error_info.value.code == "invalid_argument"
+    assert error_info.value.details == {"exception": "ValueError"}
+    assert "query must not be blank" in str(error_info.value)
+
+
+def test_tool_backend_factory_defaults_to_local_and_rejects_unknown_mode() -> None:
+    assert isinstance(create_tool_backend(), LocalToolBackend)
+    assert isinstance(
+        create_tool_backend(
+            "mcp",
+            mcp_call_tool=lambda _name, _arguments: {
+                "ok": True,
+                "data": None,
+                "error": None,
+            },
+        ),
+        MCPToolBackend,
+    )
+
+    with pytest.raises(ValueError, match="unknown tool backend"):
+        create_tool_backend("remote")
+
+    with pytest.raises(ValueError, match="MCP options require"):
+        create_tool_backend(
+            mcp_call_tool=lambda _name, _arguments: {
+                "ok": True,
+                "data": None,
+                "error": None,
+            }
+        )

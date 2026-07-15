@@ -19,6 +19,10 @@ from agent.nodes import (
 )
 from agent.skills import discover_skills
 from agent.state import AgentState
+from agent.tools import (
+    LocalToolBackend,
+    MCPBackendUnavailableError,
+)
 
 
 class RecordingTokenizer:
@@ -1634,3 +1638,138 @@ def test_graph_diagram_exposes_all_conditional_paths(
         ("prepare_retry", "check_cancel_before_workflow"),
         ("verify", "finish"),
     } <= edges
+
+
+def test_graph_records_local_tool_backend_in_trace() -> None:
+    evidence = {
+        "parent_id": "GBT-22239@2019#8.1.4.1",
+        "source_id": "GBT-22239",
+        "version": "2019",
+        "section_number": "8.1.4.1",
+        "text": "应采用两种或两种以上组合的鉴别技术。",
+        "score": 0.91,
+    }
+    backend = LocalToolBackend(
+        search_tool=lambda _query, _source_ids: [evidence]
+    )
+    graph = build_graph(
+        lambda _query, _control_text: "regulation_qa",
+        backend,
+        FakeLLM(),
+    )
+
+    result = graph.invoke(
+        {
+            "request_id": "req-local-backend",
+            "query": "管理员身份鉴别有什么要求？",
+            "control_text": "",
+            "retry_count": 1,
+            "tool_calls": [],
+            "trace": [{"node": "received"}],
+        }
+    )
+
+    tool_trace = next(
+        event
+        for event in result["trace"]
+        if event["node"] == "execute_regulation_qa"
+    )
+    assert tool_trace["tool_backend"] == "local"
+    assert result["tool_calls"][0]["tool_backend"] == "local"
+
+
+def test_graph_switches_to_mcp_backend_and_records_it_in_trace() -> None:
+    evidence = {
+        "parent_id": "GBT-22239@2019#8.1.4.1",
+        "source_id": "GBT-22239",
+        "version": "2019",
+        "section_number": "8.1.4.1",
+        "text": "应采用两种或两种以上组合的鉴别技术。",
+        "score": 0.91,
+    }
+    calls: list[tuple[str, dict]] = []
+
+    def call_mcp_tool(name: str, arguments: dict) -> dict:
+        calls.append((name, arguments))
+        return {"ok": True, "data": [evidence], "error": None}
+
+    graph = build_graph(
+        lambda _query, _control_text: "regulation_qa",
+        None,
+        FakeLLM(),
+        tool_backend="mcp",
+        mcp_call_tool=call_mcp_tool,
+    )
+
+    result = graph.invoke(
+        {
+            "request_id": "req-mcp-backend",
+            "query": "管理员身份鉴别有什么要求？",
+            "control_text": "",
+            "retry_count": 1,
+            "tool_calls": [],
+            "trace": [{"node": "received"}],
+        }
+    )
+
+    tool_trace = next(
+        event
+        for event in result["trace"]
+        if event["node"] == "execute_regulation_qa"
+    )
+    assert tool_trace["tool_backend"] == "mcp"
+    assert result["tool_calls"][0]["tool_backend"] == "mcp"
+    assert calls == [
+        (
+            "search_regulation",
+            {
+                "query": "管理员身份鉴别有什么要求？",
+                "source_ids": None,
+            },
+        )
+    ]
+
+
+def test_graph_reports_mcp_unavailability_without_silent_local_fallback() -> None:
+    def unavailable_mcp(_name: str, _arguments: dict) -> dict:
+        raise ConnectionError("server refused connection")
+
+    llm = FakeLLM()
+    graph = build_graph(
+        lambda _query, _control_text: "regulation_qa",
+        None,
+        llm,
+        tool_backend="mcp",
+        mcp_call_tool=unavailable_mcp,
+    )
+
+    with pytest.raises(
+        MCPBackendUnavailableError,
+        match=r"mcp backend unavailable.*server refused connection",
+    ):
+        graph.invoke(
+            {
+                "request_id": "req-mcp-unavailable",
+                "query": "管理员身份鉴别有什么要求？",
+                "control_text": "",
+                "tool_calls": [],
+                "trace": [{"node": "received"}],
+            }
+        )
+
+    assert llm.calls == []
+
+
+def test_graph_rejects_injected_tools_mixed_with_backend_configuration() -> None:
+    with pytest.raises(ValueError, match="either injected tools or tool backend"):
+        build_graph(
+            lambda _query, _control_text: "regulation_qa",
+            FakeTools(),
+            FakeLLM(),
+            tool_backend="mcp",
+            mcp_call_tool=lambda _name, _arguments: {
+                "ok": True,
+                "data": [],
+                "error": None,
+            },
+        )
