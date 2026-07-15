@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import threading
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -14,11 +16,13 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
-from api.events import SSEEvent, encode_sse, make_event
+from api.events import EventType, SSEEvent, encode_sse, make_event
 from api.task_manager import DuplicateTaskError, TaskManager
 
 
 DEFAULT_TEXT_CHUNK_SIZE = 24
+DEFAULT_TEXT_CHUNK_DELAY = 0.01
+LOGGER = logging.getLogger(__name__)
 WEB_DIRECTORY = Path(__file__).resolve().parents[1] / "web"
 WorkMode = Literal[
     "regulation_qa",
@@ -32,6 +36,12 @@ REFERENCE_FIELDS = {
     "section_number",
     "text",
     "score",
+}
+SAFE_CITATION_FAILURE_CODES = {
+    "unknown_citation",
+    "version_mismatch",
+    "uncited_claim",
+    "unsupported_claim",
 }
 
 
@@ -62,6 +72,101 @@ AgentRunner = Callable[[ChatRequest], Awaitable[Mapping[str, Any]]]
 ReadinessProbe = Callable[[], Awaitable[bool]]
 
 
+class _QueueEventEmitter:
+    """Forward model deltas and intermediate graph state into an SSE queue."""
+
+    def __init__(
+        self,
+        *,
+        loop: asyncio.AbstractEventLoop,
+        queue: asyncio.Queue[SSEEvent],
+        request_id: str,
+    ) -> None:
+        self.loop = loop
+        self.queue = queue
+        self.request_id = request_id
+        self._lock = threading.Lock()
+        self._started = False
+        self._parts: list[str] = []
+        self._reference_ids: tuple[str, ...] = ()
+        self._reference_generation = 1
+        self._trace_count = 0
+
+    @property
+    def started(self) -> bool:
+        with self._lock:
+            return self._started
+
+    @property
+    def text(self) -> str:
+        with self._lock:
+            return "".join(self._parts)
+
+    def _enqueue(self, event_type: EventType, data: dict[str, Any]) -> None:
+        event = make_event(event_type, self.request_id, data)
+        self.loop.call_soon_threadsafe(self.queue.put_nowait, event)
+
+    def start(self) -> None:
+        with self._lock:
+            reset = self._started
+            self._started = True
+            self._parts = []
+        if reset:
+            self._enqueue("text", {"delta": "", "reset": True})
+
+    def emit(self, delta: str) -> None:
+        if not delta:
+            return
+        with self._lock:
+            if not self._started:
+                self._started = True
+                self._parts = []
+            self._parts.append(delta)
+        self._enqueue("text", {"delta": delta})
+
+    def observe_state(self, state: Mapping[str, Any]) -> None:
+        """Publish newly available references and trace events once."""
+        self._observe_references(state.get("evidence", []))
+        self._observe_trace(state.get("trace", []))
+
+    def _observe_references(self, evidence: Any) -> None:
+        references = _references(evidence)
+        reference_ids = tuple(
+            str(reference["parent_id"]) for reference in references
+        )
+        with self._lock:
+            if reference_ids == self._reference_ids:
+                return
+            reset = bool(self._reference_ids)
+            if reset:
+                self._reference_generation += 1
+            generation = self._reference_generation
+            self._reference_ids = reference_ids
+
+        if reset:
+            self._enqueue(
+                "reference",
+                {"reset": True, "generation": generation},
+            )
+        for reference in references:
+            self._enqueue(
+                "reference",
+                {**reference, "generation": generation},
+            )
+
+    def _observe_trace(self, trace: Any) -> None:
+        if not isinstance(trace, list):
+            return
+        with self._lock:
+            start = self._trace_count if len(trace) >= self._trace_count else 0
+            raw_events = list(trace[start:])
+            self._trace_count = len(trace)
+        for raw_event in raw_events:
+            safe_event = _safe_trace(raw_event)
+            if safe_event is not None:
+                self._enqueue("trace", safe_event)
+
+
 async def _unconfigured_runner(_request: ChatRequest) -> Mapping[str, Any]:
     raise RuntimeError("agent runner is not configured")
 
@@ -78,7 +183,14 @@ def _safe_trace(event: Any) -> dict[str, Any] | None:
         return None
 
     safe = {}
-    for key in ("node", "tool", "duration_ms", "status"):
+    for key in (
+        "node",
+        "tool",
+        "action",
+        "validation_action",
+        "duration_ms",
+        "status",
+    ):
         value = event.get(key)
         if key == "duration_ms":
             if isinstance(value, (int, float)) and not isinstance(value, bool):
@@ -89,6 +201,23 @@ def _safe_trace(event: Any) -> dict[str, Any] | None:
         final_status = event.get("final_status")
         if isinstance(final_status, str):
             safe["status"] = final_status
+
+    failures = event.get("citation_failures")
+    if isinstance(failures, list) and failures:
+        failure_codes = []
+        for failure in failures:
+            if not isinstance(failure, Mapping):
+                continue
+            code = failure.get("code")
+            if (
+                isinstance(code, str)
+                and code in SAFE_CITATION_FAILURE_CODES
+                and code not in failure_codes
+            ):
+                failure_codes.append(code)
+        safe["failure_count"] = len(failures)
+        if failure_codes:
+            safe["failure_codes"] = failure_codes
     return safe or None
 
 
@@ -128,6 +257,7 @@ async def _produce_events(
     runner: AgentRunner,
     queue: asyncio.Queue[SSEEvent],
     text_chunk_size: int,
+    text_chunk_delay: float,
 ) -> None:
     request_id = request.request_id
     assert request_id is not None
@@ -136,20 +266,44 @@ async def _produce_events(
     await queue.put(
         make_event("status", request_id, {"status": "running"})
     )
+    emitter = _QueueEventEmitter(
+        loop=asyncio.get_running_loop(),
+        queue=queue,
+        request_id=request_id,
+    )
     try:
-        state = await runner(request)
+        run_streaming = getattr(runner, "run_streaming", None)
+        if callable(run_streaming):
+            state = await run_streaming(request, emitter)
+        else:
+            state = await runner(request)
         if not isinstance(state, Mapping):
             raise TypeError("agent runner must return a state object")
 
         answer = state.get("answer", "")
         if isinstance(answer, str):
-            for chunk in _text_chunks(answer, text_chunk_size):
-                await queue.put(
-                    make_event("text", request_id, {"delta": chunk})
-                )
+            await asyncio.sleep(0)
+            if emitter.started:
+                if emitter.text.strip() != answer.strip():
+                    chunks = _text_chunks(answer, text_chunk_size)
+                    for index, chunk in enumerate(chunks):
+                        await queue.put(
+                            make_event(
+                                "text",
+                                request_id,
+                                {"delta": chunk, "reset": index == 0},
+                            )
+                        )
+            else:
+                for chunk in _text_chunks(answer, text_chunk_size):
+                    await queue.put(
+                        make_event("text", request_id, {"delta": chunk})
+                    )
+                    if text_chunk_delay:
+                        await asyncio.sleep(text_chunk_delay)
 
-        for reference in _references(state.get("evidence", [])):
-            await queue.put(make_event("reference", request_id, reference))
+        emitter.observe_state(state)
+        await asyncio.sleep(0)
 
         recommendations = state.get("recommendations", [])
         if isinstance(recommendations, list):
@@ -163,15 +317,6 @@ async def _produce_events(
                 await queue.put(
                     make_event("recommendation", request_id, payload)
                 )
-
-        trace = state.get("trace", [])
-        if isinstance(trace, list):
-            for raw_event in trace:
-                safe_event = _safe_trace(raw_event)
-                if safe_event is not None:
-                    await queue.put(
-                        make_event("trace", request_id, safe_event)
-                    )
 
         final_status = state.get("final_status", "completed")
         if final_status in {"failed", "cancelled"}:
@@ -214,6 +359,7 @@ async def _produce_events(
         )
         terminal_sent = True
     except Exception:
+        LOGGER.exception("agent execution failed for request_id=%s", request_id)
         await queue.put(
             make_event(
                 "error",
@@ -271,10 +417,13 @@ def create_app(
     task_manager: TaskManager | None = None,
     readiness_probe: ReadinessProbe | None = None,
     text_chunk_size: int = DEFAULT_TEXT_CHUNK_SIZE,
+    text_chunk_delay: float = DEFAULT_TEXT_CHUNK_DELAY,
 ) -> FastAPI:
     """Create an app with explicit runner and task lifecycle dependencies."""
     if text_chunk_size < 1:
         raise ValueError("text_chunk_size must be positive")
+    if text_chunk_delay < 0:
+        raise ValueError("text_chunk_delay must not be negative")
 
     manager = task_manager or TaskManager()
     runner = agent_runner or _unconfigured_runner
@@ -333,6 +482,7 @@ def create_app(
                     runner,
                     queue,
                     text_chunk_size,
+                    text_chunk_delay,
                 ),
             )
         except DuplicateTaskError as exc:

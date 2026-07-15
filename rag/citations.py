@@ -28,7 +28,29 @@ class CitationValidation(TypedDict):
 
 EntailmentEvaluator = Callable[[str, dict], bool]
 _NUMBERED_CITATION = re.compile(r"\[(\d+)]")
-_SENTENCE_BOUNDARY = re.compile(r"[。！？!?]+")
+_SENTENCE_BOUNDARY = re.compile(
+    r"[。！？!?]+|(?<!\d)(?<!vs)(?<!Vs)(?<!VS)\.(?!\d)|[\r\n]+"
+)
+_STRUCTURE_LABELS = {
+    "left",
+    "right",
+    "comparison",
+    "limitation",
+    "左",
+    "右",
+    "左侧",
+    "右侧",
+    "比较",
+    "限制",
+    "局限性",
+    "direct answer",
+    "version note",
+    "version notes",
+    "直接回答",
+    "直接答案",
+    "版本说明",
+    "限制说明",
+}
 
 
 def parse_numbered_citations(text: str) -> list[int]:
@@ -63,6 +85,13 @@ def _is_disclaimer(claim: str) -> bool:
     )
 
 
+def _is_structure_label(claim: str) -> bool:
+    normalized = claim.strip().lstrip("#").strip()
+    normalized = normalized.replace("*", "").strip()
+    normalized = normalized.rstrip(":：").strip().casefold()
+    return normalized in _STRUCTURE_LABELS
+
+
 def _parent_version(parent_id: object) -> str | None:
     if not isinstance(parent_id, str):
         return None
@@ -80,12 +109,13 @@ def validate_citations(
     evidence: list[dict],
     *,
     entailment_evaluator: EntailmentEvaluator,
+    joint_citations: bool = False,
 ) -> CitationValidation:
     """Return the validation result for answer claims and ordered evidence."""
     failures: list[CitationFailure] = []
 
     for claim, citations in extract_claims(answer):
-        if _is_disclaimer(claim):
+        if _is_disclaimer(claim) or _is_structure_label(claim):
             continue
         if not citations:
             failures.append(
@@ -97,6 +127,8 @@ def validate_citations(
             )
             continue
 
+        cited_items = []
+        deterministic_failure = False
         for citation in citations:
             if citation < 1 or citation > len(evidence):
                 failures.append(
@@ -106,6 +138,7 @@ def validate_citations(
                         "citation": citation,
                     }
                 )
+                deterministic_failure = True
                 continue
 
             cited_evidence = evidence[citation - 1]
@@ -120,8 +153,49 @@ def validate_citations(
                         "citation": citation,
                     }
                 )
+                deterministic_failure = True
                 continue
+            cited_items.append((citation, cited_evidence))
 
+        if deterministic_failure:
+            continue
+
+        if joint_citations and len(cited_items) > 1:
+            combined_evidence = {
+                "parent_id": " + ".join(
+                    str(item.get("parent_id", ""))
+                    for _citation, item in cited_items
+                ),
+                "source_id": " + ".join(
+                    str(item.get("source_id", ""))
+                    for _citation, item in cited_items
+                ),
+                "version": " + ".join(
+                    str(item.get("version", ""))
+                    for _citation, item in cited_items
+                ),
+                "section_number": " + ".join(
+                    str(item.get("section_number", ""))
+                    for _citation, item in cited_items
+                ),
+                "text": "\n\n".join(
+                    f"[{citation}] {item.get('text', '')}"
+                    for citation, item in cited_items
+                ),
+                "score": None,
+                "joint": True,
+            }
+            if not entailment_evaluator(claim, combined_evidence):
+                failures.append(
+                    {
+                        "code": "unsupported_claim",
+                        "claim": claim,
+                        "citation": None,
+                    }
+                )
+            continue
+
+        for citation, cited_evidence in cited_items:
             if not entailment_evaluator(claim, cited_evidence):
                 failures.append(
                     {

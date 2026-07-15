@@ -10,7 +10,17 @@ const EVENT_TYPES = new Set([
   "error",
 ]);
 const TERMINAL_EVENT_TYPES = new Set(["done", "error"]);
-const TRACE_FIELDS = ["node", "tool", "duration_ms", "status"];
+const TRACE_FIELDS = [
+  "node",
+  "tool",
+  "action",
+  "validation_action",
+  "failure_count",
+  "failure_codes",
+  "duration_ms",
+  "status",
+];
+const ANSWER_RENDER_INTERVAL_MS = 40;
 
 const MODE_CONFIG = {
   regulation_qa: {
@@ -19,7 +29,7 @@ const MODE_CONFIG = {
     placeholder: "例如：管理员身份鉴别有哪些要求？",
     examples: [
       "管理员身份鉴别有哪些要求？",
-      "法规对访问控制提出了什么要求？",
+      "身份鉴别为什么要组合两种技术？",
     ],
   },
   clause_comparison: {
@@ -28,8 +38,8 @@ const MODE_CONFIG = {
     placeholder:
       "例如：比较 GB/T 22239-2019 8.1.4.1 与 ISO 27001:2022 A.5.17",
     examples: [
-      "比较两项身份鉴别条款的要求和适用范围",
-      "两个版本的访问控制条款有什么变化？",
+      "比较 GB/T 22239 与 GB/T 35273 的身份相关安全要求",
+      "比较《数据安全法》与《网络安全法》的安全事件处置要求",
     ],
   },
   gap_analysis: {
@@ -38,7 +48,7 @@ const MODE_CONFIG = {
     placeholder: "例如：检查当前管理员登录控制有哪些差距",
     examples: [
       "检查管理员身份鉴别控制差距",
-      "评估当前访问权限复核流程",
+      "评估当前管理员身份鉴别措施",
     ],
   },
 };
@@ -291,6 +301,216 @@ function safeRecommendationText(data) {
   return "收到一条未包含可展示文本的建议。";
 }
 
+function appendInlineMarkdown(parent, text, documentRoot, createCitation) {
+  const pattern =
+    /(\*\*([^*\n]+)\*\*|__([^_\n]+)__|\x60([^\x60\n]+)\x60|\*([^*\n]+)\*|_([^_\n]+)_|\[(\d+)\])/g;
+  let cursor = 0;
+  let match = pattern.exec(text);
+  while (match !== null) {
+    parent.append(documentRoot.createTextNode(text.slice(cursor, match.index)));
+    let node;
+    if (match[2] !== undefined || match[3] !== undefined) {
+      node = documentRoot.createElement("strong");
+      node.textContent = match[2] ?? match[3];
+    } else if (match[4] !== undefined) {
+      node = documentRoot.createElement("code");
+      node.textContent = match[4];
+    } else if (match[5] !== undefined || match[6] !== undefined) {
+      node = documentRoot.createElement("em");
+      node.textContent = match[5] ?? match[6];
+    } else {
+      node = createCitation(Number.parseInt(match[7], 10));
+    }
+    parent.append(node);
+    cursor = pattern.lastIndex;
+    match = pattern.exec(text);
+  }
+  parent.append(documentRoot.createTextNode(text.slice(cursor)));
+}
+
+function splitTableRow(line) {
+  return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(
+    (cell) => cell.trim(),
+  );
+}
+
+function isTableSeparator(line) {
+  const cells = splitTableRow(line);
+  return (
+    cells.length > 0 &&
+    cells.every((cell) => /^:?-{3,}:?$/.test(cell))
+  );
+}
+
+function startsMarkdownBlock(lines, index) {
+  const line = lines[index] ?? "";
+  const next = lines[index + 1] ?? "";
+  const trimmed = line.trim();
+  const fence = "\x60\x60\x60";
+  return (
+    !trimmed ||
+    trimmed.startsWith(fence) ||
+    /^#{1,6}\s+\S/.test(line) ||
+    /^\s*([-*+]\s+\S|\d+[.)]\s+\S|>\s?)/.test(line) ||
+    /^\s*((-{3,})|(\*{3,})|(_{3,}))\s*$/.test(line) ||
+    (line.includes("|") && isTableSeparator(next))
+  );
+}
+
+function renderMarkdownInto(
+  container,
+  markdown,
+  { documentRoot, createCitation },
+) {
+  container.replaceChildren();
+  const lines = markdown.replaceAll("\r\n", "\n").split("\n");
+  const appendInline = (parent, text) => {
+    appendInlineMarkdown(parent, text, documentRoot, createCitation);
+  };
+
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index];
+    if (!line.trim()) {
+      index += 1;
+      continue;
+    }
+
+    const fence = "\x60\x60\x60";
+    if (line.trim().startsWith(fence)) {
+      const language = line.trim().slice(fence.length).trim();
+      const codeLines = [];
+      index += 1;
+      while (
+        index < lines.length &&
+        !lines[index].trim().startsWith(fence)
+      ) {
+        codeLines.push(lines[index]);
+        index += 1;
+      }
+      if (index < lines.length) {
+        index += 1;
+      }
+      const pre = documentRoot.createElement("pre");
+      const code = documentRoot.createElement("code");
+      if (language) {
+        code.dataset.language = language;
+      }
+      code.textContent = codeLines.join("\n");
+      pre.append(code);
+      container.append(pre);
+      continue;
+    }
+
+    if (line.includes("|") && isTableSeparator(lines[index + 1] ?? "")) {
+      const table = documentRoot.createElement("table");
+      const head = documentRoot.createElement("thead");
+      const headRow = documentRoot.createElement("tr");
+      for (const cellText of splitTableRow(line)) {
+        const cell = documentRoot.createElement("th");
+        appendInline(cell, cellText);
+        headRow.append(cell);
+      }
+      head.append(headRow);
+      table.append(head);
+      index += 2;
+
+      const body = documentRoot.createElement("tbody");
+      while (
+        index < lines.length &&
+        lines[index].trim() &&
+        lines[index].includes("|")
+      ) {
+        const row = documentRoot.createElement("tr");
+        for (const cellText of splitTableRow(lines[index])) {
+          const cell = documentRoot.createElement("td");
+          appendInline(cell, cellText);
+          row.append(cell);
+        }
+        body.append(row);
+        index += 1;
+      }
+      if (body.childNodes.length > 0) {
+        table.append(body);
+      }
+      const wrapper = documentRoot.createElement("div");
+      wrapper.className = "markdown-table-wrap";
+      wrapper.append(table);
+      container.append(wrapper);
+      continue;
+    }
+
+    const headingMatch = /^(#{1,6})\s+(.+)$/.exec(line);
+    if (headingMatch) {
+      const heading = documentRoot.createElement(
+        "h" + String(headingMatch[1].length),
+      );
+      appendInline(heading, headingMatch[2]);
+      container.append(heading);
+      index += 1;
+      continue;
+    }
+
+    if (/^\s*((-{3,})|(\*{3,})|(_{3,}))\s*$/.test(line)) {
+      container.append(documentRoot.createElement("hr"));
+      index += 1;
+      continue;
+    }
+
+    if (/^\s*>\s?/.test(line)) {
+      const quote = documentRoot.createElement("blockquote");
+      while (index < lines.length && /^\s*>\s?/.test(lines[index])) {
+        if (quote.childNodes.length > 0) {
+          quote.append(documentRoot.createElement("br"));
+        }
+        appendInline(quote, lines[index].replace(/^\s*>\s?/, ""));
+        index += 1;
+      }
+      container.append(quote);
+      continue;
+    }
+
+    const unordered = /^\s*[-*+]\s+\S/.test(line);
+    const ordered = /^\s*\d+[.)]\s+\S/.test(line);
+    if (unordered || ordered) {
+      const list = documentRoot.createElement(ordered ? "ol" : "ul");
+      const itemPattern = ordered
+        ? /^\s*\d+[.)]\s+(.+)$/
+        : /^\s*[-*+]\s+(.+)$/;
+      let itemMatch = itemPattern.exec(lines[index]);
+      while (itemMatch) {
+        const item = documentRoot.createElement("li");
+        appendInline(item, itemMatch[1]);
+        list.append(item);
+        index += 1;
+        itemMatch =
+          index < lines.length ? itemPattern.exec(lines[index]) : null;
+      }
+      container.append(list);
+      continue;
+    }
+
+    const paragraph = documentRoot.createElement("p");
+    let firstLine = true;
+    while (index < lines.length && !startsMarkdownBlock(lines, index)) {
+      if (!firstLine) {
+        paragraph.append(documentRoot.createElement("br"));
+      }
+      appendInline(paragraph, lines[index]);
+      firstLine = false;
+      index += 1;
+    }
+    if (firstLine) {
+      // Streaming can temporarily leave an incomplete Markdown marker such as
+      // "1.  ", "- ", or "# ". Always consume one line so rendering can
+      // never spin forever while the rest of the token is still in flight.
+      appendInline(paragraph, lines[index]);
+      index += 1;
+    }
+    container.append(paragraph);
+  }
+}
+
 class GRCApplication {
   constructor(documentRoot) {
     this.document = documentRoot;
@@ -300,9 +520,12 @@ class GRCApplication {
     this.answerText = "";
     this.references = [];
     this.referenceIds = new Set();
+    this.referenceGeneration = 0;
     this.traceCount = 0;
     this.answerContent = null;
     this.answerStatus = null;
+    this.answerRenderTimer = null;
+    this.answerRenderFrame = null;
 
     this.elements = this.readElements();
     this.bindInteractions();
@@ -355,10 +578,11 @@ class GRCApplication {
       this.startRequest();
     });
     this.elements.queryInput.addEventListener("keydown", (event) => {
-      if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-        event.preventDefault();
-        this.elements.form.requestSubmit();
+      if (event.key !== "Enter" || event.isComposing || event.shiftKey) {
+        return;
       }
+      event.preventDefault();
+      this.elements.form.requestSubmit();
     });
     this.elements.stopButton.addEventListener("click", () => this.stopRequest());
   }
@@ -416,7 +640,7 @@ class GRCApplication {
         throw new Error("health endpoint failed");
       }
       const data = await response.json();
-      if (data.status !== "ok") {
+      if (!new Set(["ok", "ready"]).has(data.status)) {
         throw new Error("service is not ready");
       }
       this.elements.healthDot.classList.add("is-healthy");
@@ -446,9 +670,11 @@ class GRCApplication {
   }
 
   resetResultPanels() {
+    this.cancelScheduledAnswerRender();
     this.answerText = "";
     this.references = [];
     this.referenceIds.clear();
+    this.referenceGeneration = 0;
     this.traceCount = 0;
     this.answerContent = null;
     this.answerStatus = null;
@@ -530,42 +756,75 @@ class GRCApplication {
     if (!this.answerContent) {
       return;
     }
-    this.answerContent.replaceChildren();
     if (!this.answerText) {
+      this.answerContent.replaceChildren();
       this.answerContent.textContent = "正在等待回答内容…";
       return;
     }
+    renderMarkdownInto(this.answerContent, this.answerText, {
+      documentRoot: this.document,
+      createCitation: (number) => this.makeCitationButton(number),
+    });
+  }
 
-    const citationPattern = /\[(\d+)\]/g;
-    let cursor = 0;
-    let match = citationPattern.exec(this.answerText);
-    while (match !== null) {
-      this.answerContent.append(
-        this.document.createTextNode(this.answerText.slice(cursor, match.index)),
-      );
-      const number = Number.parseInt(match[1], 10);
-      const button = this.document.createElement("button");
-      button.type = "button";
-      button.className = "citation-button";
-      button.textContent = `[${number}]`;
-      const available = number >= 1 && number <= this.references.length;
-      button.disabled = !available;
-      button.title = available
-        ? `定位证据 ${number}`
-        : `证据 ${number} 尚未到达`;
-      if (available) {
-        button.addEventListener("click", () => this.focusEvidence(number));
-      }
-      this.answerContent.append(button);
-      cursor = citationPattern.lastIndex;
-      match = citationPattern.exec(this.answerText);
+  cancelScheduledAnswerRender() {
+    if (this.answerRenderTimer !== null) {
+      globalThis.clearTimeout(this.answerRenderTimer);
+      this.answerRenderTimer = null;
     }
-    this.answerContent.append(
-      this.document.createTextNode(this.answerText.slice(cursor)),
-    );
+    if (this.answerRenderFrame !== null) {
+      globalThis.cancelAnimationFrame(this.answerRenderFrame);
+      this.answerRenderFrame = null;
+    }
+  }
+
+  scheduleAnswerRender() {
+    if (
+      this.answerRenderTimer !== null ||
+      this.answerRenderFrame !== null
+    ) {
+      return;
+    }
+    this.answerRenderTimer = globalThis.setTimeout(() => {
+      this.answerRenderTimer = null;
+      this.answerRenderFrame = globalThis.requestAnimationFrame(() => {
+        this.answerRenderFrame = null;
+        this.renderAnswer();
+        this.scrollTimeline();
+      });
+    }, ANSWER_RENDER_INTERVAL_MS);
+  }
+
+  flushAnswerRender() {
+    this.cancelScheduledAnswerRender();
+    this.renderAnswer();
+    this.scrollTimeline();
+  }
+
+  makeCitationButton(number) {
+    const button = this.document.createElement("button");
+    button.type = "button";
+    button.className = "citation-button";
+    button.textContent = "[" + String(number) + "]";
+    const available = number >= 1 && number <= this.references.length;
+    button.disabled = !available;
+    button.title = available
+      ? "定位证据 " + String(number)
+      : "证据 " + String(number) + " 尚未到达";
+    if (available) {
+      button.addEventListener("click", () => this.focusEvidence(number));
+    }
+    return button;
   }
 
   addReference(data) {
+    const generation = Number.isInteger(data.generation)
+      ? data.generation
+      : this.referenceGeneration;
+    if (generation < this.referenceGeneration) {
+      return;
+    }
+    this.referenceGeneration = generation;
     if (!isNonEmptyString(data.parent_id) || this.referenceIds.has(data.parent_id)) {
       return;
     }
@@ -622,6 +881,22 @@ class GRCApplication {
     this.renderAnswer();
   }
 
+  resetReferences(data) {
+    const generation = Number.isInteger(data.generation)
+      ? data.generation
+      : this.referenceGeneration + 1;
+    if (generation < this.referenceGeneration) {
+      return;
+    }
+    this.referenceGeneration = generation;
+    this.references = [];
+    this.referenceIds.clear();
+    this.elements.evidenceList.replaceChildren();
+    this.elements.evidenceEmpty.hidden = false;
+    this.elements.evidenceCount.textContent = "0";
+    this.renderAnswer();
+  }
+
   focusEvidence(number) {
     this.selectPanel("evidence");
     const card = this.document.getElementById(`evidence-${number}`);
@@ -642,9 +917,13 @@ class GRCApplication {
     const safe = {};
     for (const field of TRACE_FIELDS) {
       const value = data[field];
-      if (field === "duration_ms") {
+      if (field === "duration_ms" || field === "failure_count") {
         if (typeof value === "number" && Number.isFinite(value)) {
           safe[field] = value;
+        }
+      } else if (field === "failure_codes") {
+        if (Array.isArray(value)) {
+          safe[field] = value.filter(isNonEmptyString).map((item) => item.trim());
         }
       } else if (isNonEmptyString(value)) {
         safe[field] = value.trim();
@@ -674,6 +953,22 @@ class GRCApplication {
       const tool = this.document.createElement("span");
       tool.textContent = `工具 ${safe.tool}`;
       meta.append(tool);
+    }
+    if (safe.action) {
+      const action = this.document.createElement("span");
+      action.textContent = `动作 ${safe.action}`;
+      meta.append(action);
+    }
+    if (safe.validation_action) {
+      const validation = this.document.createElement("span");
+      validation.textContent = `校验 ${safe.validation_action}`;
+      meta.append(validation);
+    }
+    if (safe.failure_codes?.length) {
+      const failures = this.document.createElement("span");
+      const count = safe.failure_count ?? safe.failure_codes.length;
+      failures.textContent = `失败 ${safe.failure_codes.join(", ")} × ${count}`;
+      meta.append(failures);
     }
     if (safe.duration_ms !== undefined) {
       const duration = this.document.createElement("span");
@@ -708,19 +1003,29 @@ class GRCApplication {
       if (this.answerStatus) {
         this.answerStatus.textContent = "已连接，正在接收事件";
       }
+      if (this.answerContent && !this.answerText) {
+        this.answerContent.textContent = "已连接，正在检索证据并生成回答…";
+      }
     } else if (event.type === "text") {
       if (typeof data.delta === "string") {
+        if (data.reset === true) {
+          this.answerText = "";
+        }
         this.answerText += data.delta;
-        this.renderAnswer();
-        this.scrollTimeline();
+        this.scheduleAnswerRender();
       }
     } else if (event.type === "reference") {
-      this.addReference(data);
+      if (data.reset === true) {
+        this.resetReferences(data);
+      } else {
+        this.addReference(data);
+      }
     } else if (event.type === "recommendation") {
       this.addRecommendation(data);
     } else if (event.type === "trace") {
       this.addTrace(data);
     } else if (event.type === "done") {
+      this.flushAnswerRender();
       const status = isNonEmptyString(data.status) ? data.status : "completed";
       this.setConnection("completed", `请求结束 · ${status}`);
       if (this.answerStatus) {
@@ -728,6 +1033,7 @@ class GRCApplication {
       }
       this.announce(`请求已结束，状态 ${status}`);
     } else if (event.type === "error") {
+      this.flushAnswerRender();
       const status = isNonEmptyString(data.status) ? data.status : "failed";
       const message = isNonEmptyString(data.message)
         ? data.message
@@ -774,6 +1080,8 @@ class GRCApplication {
 
     this.resetResultPanels();
     this.addUserMessage(query, this.mode === "gap_analysis" ? controlText : "");
+    this.elements.queryInput.value = "";
+    this.elements.controlInput.value = "";
     this.addAssistantMessage();
     this.requestId = makeRequestId();
     const currentRequestId = this.requestId;
@@ -888,6 +1196,7 @@ globalThis.GRCFrontend = Object.freeze({
   StreamSession,
   StreamProtocolError,
   StreamInterruptedError,
+  renderMarkdownInto,
   runContractSelfTests,
 });
 

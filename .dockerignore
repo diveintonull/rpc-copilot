@@ -13,7 +13,11 @@ __pycache__/
 .codex/
 .agents/
 .superpowers/
-data/
+data/*
+!data/parsed/
+data/parsed/*
+!data/parsed/*.md
+!data/parsed/_parents_store.json
 docs/
 results/
 tests/

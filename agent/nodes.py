@@ -34,6 +34,11 @@ GAP_ANALYSIS_UNSAFE_CLAIMS = (
 )
 EVIDENCE_START = "<evidence>"
 EVIDENCE_END = "</evidence>"
+REPAIRABLE_CITATION_FAILURES = {
+    "uncited_claim",
+    "unsupported_claim",
+    "unknown_citation",
+}
 
 
 def _evidence_key(item: dict) -> tuple[object, object, object]:
@@ -190,6 +195,31 @@ def select_workflow(state: AgentState) -> str:
 def execute_regulation_qa(state: AgentState, tools, llm) -> dict:
     """Search regulation evidence and produce an evidence-aware answer."""
     query = state["query"]
+    if state.get("retry_action") == "repair_answer" and state.get("evidence"):
+        evidence = state["evidence"]
+        failures = state.get("citation_failures", [])
+        answer = llm.repair_regulation_answer(
+            query,
+            state.get("answer", ""),
+            _bound_evidence(evidence),
+            failures,
+            skill_text=state.get("skill_text", ""),
+        )
+        return {
+            "answer": answer,
+            "evidence": evidence,
+            "retry_action": "",
+            "citation_failures": [],
+            "tool_calls": state.get("tool_calls", []),
+            "trace": state["trace"] + [
+                {
+                    "node": "execute_regulation_qa",
+                    "action": "repair_answer",
+                    "result_count": len(evidence),
+                }
+            ],
+        }
+
     evidence = tools.search_regulation(query, None)
 
     tool_call = {
@@ -215,6 +245,8 @@ def execute_regulation_qa(state: AgentState, tools, llm) -> dict:
 
     return {
         "answer": answer,
+        "retry_action": "",
+        "citation_failures": [],
         "tool_calls": state.get("tool_calls", []) + [tool_call],
         "evidence": evidence,
         "trace": state["trace"] + [new_trace],
@@ -229,11 +261,68 @@ def execute_clause_comparison(state: AgentState, tools, llm) -> dict:
         skill_text=state.get("skill_text", ""),
     )
 
-    comparison = tools.compare_clauses(
-        plan["left"],
-        plan["right"],
-        plan["dimensions"],
-    )
+    left_plan = plan["left"]
+    right_plan = plan["right"]
+
+    def is_exact(reference: dict) -> bool:
+        return all(
+            isinstance(reference.get(field), str)
+            and bool(reference[field].strip())
+            for field in ("source_id", "version", "section_number")
+        )
+
+    if is_exact(left_plan) and is_exact(right_plan):
+        comparison = tools.compare_clauses(
+            left_plan,
+            right_plan,
+            plan["dimensions"],
+        )
+        tool_calls = [
+            {
+                "tool": "compare_clauses",
+                "left": left_plan,
+                "right": right_plan,
+                "dimensions": plan["dimensions"],
+            }
+        ]
+        trace_tool = "compare_clauses"
+    else:
+        side_results = []
+        tool_calls = []
+        for side_plan in (left_plan, right_plan):
+            source_id = side_plan.get("source_id", "").strip()
+            source_ids = [source_id] if source_id else None
+            search_query = side_plan.get("search_query", "").strip() or query
+            candidates = tools.search_regulation(search_query, source_ids)
+            requested_version = side_plan.get("version", "").strip()
+            if requested_version:
+                candidates = [
+                    item
+                    for item in candidates
+                    if item.get("version") == requested_version
+                ]
+            side_results.append(candidates[0] if candidates else None)
+            tool_calls.append(
+                {
+                    "tool": "search_regulation",
+                    "query": search_query,
+                    "source_ids": source_ids,
+                    "result_count": len(candidates),
+                }
+            )
+        comparison = {
+            "left": side_results[0],
+            "right": side_results[1],
+            "dimensions": list(plan["dimensions"]),
+        }
+        if (
+            comparison["left"] is not None
+            and comparison["right"] is not None
+            and comparison["left"].get("parent_id")
+            == comparison["right"].get("parent_id")
+        ):
+            comparison["right"] = None
+        trace_tool = "search_regulation"
 
     left_evidence = comparison["left"]
     right_evidence = comparison["right"]
@@ -245,17 +334,12 @@ def execute_clause_comparison(state: AgentState, tools, llm) -> dict:
         for item in [left_evidence, right_evidence]
         if item is not None
     ]
-    tool_call = {
-        "tool": "compare_clauses",
-        "left": plan["left"],
-        "right": plan["right"],
-        "dimensions": plan["dimensions"],
-        "left_found": left_found,
-        "right_found": right_found,
-    }
+    for tool_call in tool_calls:
+        tool_call["left_found"] = left_found
+        tool_call["right_found"] = right_found
     new_trace = {
         "node": "execute_clause_comparison",
-        "tool": "compare_clauses",
+        "tool": trace_tool,
         "left_found": left_found,
         "right_found": right_found,
     }
@@ -276,7 +360,7 @@ def execute_clause_comparison(state: AgentState, tools, llm) -> dict:
 
     return {
         "answer": answer,
-        "tool_calls": state.get("tool_calls", []) + [tool_call],
+        "tool_calls": state.get("tool_calls", []) + tool_calls,
         "evidence": evidence,
         "trace": state["trace"] + [new_trace],
     }
@@ -387,24 +471,54 @@ def select_after_post_workflow_cancel(state: AgentState) -> str:
 
 
 def prepare_retry(state: AgentState, llm) -> dict:
-    """Rewrite the query once and clear transient generation state."""
+    """Repair a grounded answer or re-retrieve when evidence itself failed."""
     failures = []
     if state.get("trace"):
         failures = state["trace"][-1].get("citation_failures", [])
     query = state["query"]
+    failure_codes = {
+        failure.get("code")
+        for failure in failures
+        if isinstance(failure, dict)
+    }
+    can_repair_answer = (
+        state.get("intent") == "regulation_qa"
+        and bool(state.get("evidence"))
+        and bool(failure_codes)
+        and failure_codes <= REPAIRABLE_CITATION_FAILURES
+    )
+    retry_count = state.get("retry_count", 0) + 1
+
+    if can_repair_answer:
+        return {
+            "citation_failures": failures,
+            "citations_valid": False,
+            "retry_action": "repair_answer",
+            "retry_count": retry_count,
+            "trace": state["trace"] + [
+                {
+                    "node": "prepare_retry",
+                    "action": "repair_answer",
+                    "retry_count": retry_count,
+                }
+            ],
+        }
+
     rewritten_query = llm.rewrite_query(query, failures).strip()
     if not rewritten_query:
         rewritten_query = query
-    retry_count = state.get("retry_count", 0) + 1
     return {
         "query": rewritten_query,
         "answer": "",
         "evidence": [],
+        "citation_failures": failures,
         "citations_valid": False,
+        "retry_action": "retrieve",
         "retry_count": retry_count,
         "trace": state["trace"] + [
             {
                 "node": "prepare_retry",
+                "action": "retrieve",
                 "retry_count": retry_count,
                 "query": rewritten_query,
             }
@@ -467,6 +581,7 @@ def verify(
             state.get("answer", ""),
             evidence,
             entailment_evaluator=entailment_evaluator,
+            joint_citations=True,
         )
         citations_valid = validation["valid"]
         citation_failures = validation["failures"]

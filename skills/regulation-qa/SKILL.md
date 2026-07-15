@@ -19,7 +19,8 @@ description: Answer questions about requirements in one regulation or regulation
 4. Handle any version conflict before drafting the answer.
 5. Answer only the requirements supported by retrieved evidence.
 6. Cite every factual claim with the corresponding numbered citation such as `[1]`.
-7. State any evidence or applicability limitation separately from the factual answer.
+7. State an evidence or applicability limitation only when it materially affects
+   the answer and the available evidence directly supports that limitation.
 
 ## Evidence rules
 
@@ -28,6 +29,10 @@ description: Answer questions about requirements in one regulation or regulation
 - Do not invent a source ID, version, section number, effective date, or quotation.
 - Do not use one clause to support a materially broader requirement.
 - Treat an inference as an inference and identify the evidence behind it.
+- Cite the smallest relevant evidence set. Do not attach every retrieved citation
+  to every sentence, and do not cite an item unless it supports the whole sentence.
+- Do not infer that a requirement, exception, conflict, or scope rule is absent
+  merely because it was not present in the retrieved evidence.
 
 ## Version conflict handling
 
@@ -42,8 +47,16 @@ Return:
 
 1. A direct answer.
 2. Numbered citations for every factual requirement.
-3. A version note when version choice or conflict matters.
-4. A limitation note when evidence or applicability is incomplete.
+3. A version note only when the requested version is unavailable or retrieved
+   versions genuinely conflict. Do not state "no version conflict" when all
+   evidence already matches the requested version.
+4. A limitation note only when a directly supported limitation materially affects
+   the answer. Otherwise omit the section entirely.
+
+"A direct answer" describes the content to return; it does not require a literal
+"Direct answer" or "直接回答" heading. Do not add source summaries, generic
+assurances that citations are valid, or comparisons among retrieved clauses unless
+the user explicitly asks for them.
 
 ## Boundary and refusal
 

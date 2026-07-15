@@ -147,6 +147,212 @@ def test_chat_streams_text_reference_safe_trace_and_terminal_done() -> None:
     assert app.state.task_manager.active_count == 0
 
 
+def test_trace_exposes_safe_citation_failure_summary_without_claim_text() -> None:
+    async def runner(request) -> dict:
+        state = successful_state(request)
+        state["trace"] = [
+            {
+                "node": "verify",
+                "citations_valid": False,
+                "validation_action": "refuse",
+                "citation_failures": [
+                    {
+                        "code": "uncited_claim",
+                        "claim": "PRIVATE CLAIM ONE",
+                        "citation": None,
+                    },
+                    {
+                        "code": "unsupported_claim",
+                        "claim": "PRIVATE CLAIM TWO",
+                        "citation": 1,
+                    },
+                ],
+            }
+        ]
+        return state
+
+    app = create_app(agent_runner=runner, text_chunk_delay=0)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/chat",
+            json={"request_id": "req-safe-failures", "query": "test"},
+        )
+
+    trace = next(
+        event for event in parse_sse(response.text) if event["type"] == "trace"
+    )
+    assert trace["data"] == {
+        "node": "verify",
+        "validation_action": "refuse",
+        "failure_count": 2,
+        "failure_codes": ["uncited_claim", "unsupported_claim"],
+    }
+    assert "PRIVATE CLAIM" not in response.text
+
+
+def test_chat_forwards_runner_deltas_without_replaying_the_final_answer() -> None:
+    class StreamingRunner:
+        async def __call__(self, _request) -> dict:
+            raise AssertionError("streaming runner should use run_streaming")
+
+        async def run_streaming(self, request, emitter) -> dict:
+            emitter.start()
+            emitter.emit("第一段")
+            await asyncio.sleep(0)
+            emitter.emit("第二段")
+            state = successful_state(request)
+            state["answer"] = "第一段第二段"
+            return state
+
+    app = create_app(agent_runner=StreamingRunner(), text_chunk_delay=0)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/chat",
+            json={"request_id": "req-live-stream", "query": "测试流式回答"},
+        )
+
+    events = parse_sse(response.text)
+    text_events = [event for event in events if event["type"] == "text"]
+    assert [event["data"] for event in text_events] == [
+        {"delta": "第一段"},
+        {"delta": "第二段"},
+    ]
+    assert events[-1]["type"] == "done"
+
+
+def test_chat_resets_partial_text_when_the_graph_retries_generation() -> None:
+    class RetryingStreamingRunner:
+        async def __call__(self, _request) -> dict:
+            raise AssertionError("streaming runner should use run_streaming")
+
+        async def run_streaming(self, request, emitter) -> dict:
+            emitter.start()
+            emitter.emit("需要丢弃的草稿")
+            emitter.start()
+            emitter.emit("最终回答")
+            state = successful_state(request)
+            state["answer"] = "最终回答"
+            return state
+
+    app = create_app(agent_runner=RetryingStreamingRunner(), text_chunk_delay=0)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/chat",
+            json={"request_id": "req-stream-retry", "query": "测试重试"},
+        )
+
+    rendered = ""
+    text_events = [
+        event for event in parse_sse(response.text) if event["type"] == "text"
+    ]
+    for event in text_events:
+        if event["data"].get("reset") is True:
+            rendered = ""
+        rendered += event["data"]["delta"]
+    assert rendered == "最终回答"
+    assert any(event["data"].get("reset") is True for event in text_events)
+
+
+def test_intermediate_state_streams_reference_and_trace_before_done() -> None:
+    class ObservingRunner:
+        async def __call__(self, _request) -> dict:
+            raise AssertionError("streaming runner should use run_streaming")
+
+        async def run_streaming(self, request, emitter) -> dict:
+            emitter.start()
+            emitter.emit("回答[1]")
+            intermediate = successful_state(request)
+            intermediate["answer"] = "回答[1]"
+            intermediate["trace"] = [
+                {"node": "execute_regulation_qa", "tool": "search_regulation"}
+            ]
+            intermediate.pop("final_status")
+            emitter.observe_state(intermediate)
+            await asyncio.sleep(0)
+            final = dict(intermediate)
+            final["final_status"] = "completed"
+            final["trace"] = intermediate["trace"] + [
+                {"node": "verify", "validation_action": "pass"},
+                {"node": "finish", "final_status": "completed"},
+            ]
+            return final
+
+    app = create_app(agent_runner=ObservingRunner(), text_chunk_delay=0)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/chat",
+            json={"request_id": "req-live-state", "query": "测试中间状态"},
+        )
+
+    events = parse_sse(response.text)
+    event_types = [event["type"] for event in events]
+    assert event_types.count("reference") == 1
+    assert event_types.index("reference") < event_types.index("done")
+    trace_nodes = [
+        event["data"]["node"] for event in events if event["type"] == "trace"
+    ]
+    assert trace_nodes == ["execute_regulation_qa", "verify", "finish"]
+
+
+def test_reference_stream_resets_when_retry_changes_evidence() -> None:
+    first_reference = {
+        "parent_id": "SOURCE@2024#1",
+        "source_id": "SOURCE",
+        "version": "2024",
+        "section_number": "1",
+        "text": "first",
+    }
+    second_reference = {
+        "parent_id": "SOURCE@2025#2",
+        "source_id": "SOURCE",
+        "version": "2025",
+        "section_number": "2",
+        "text": "second",
+    }
+
+    class ChangingEvidenceRunner:
+        async def __call__(self, _request) -> dict:
+            raise AssertionError("streaming runner should use run_streaming")
+
+        async def run_streaming(self, request, emitter) -> dict:
+            base = {
+                "request_id": request.request_id,
+                "answer": "最终回答[1]",
+                "trace": [],
+            }
+            emitter.observe_state({**base, "evidence": [first_reference]})
+            emitter.observe_state({**base, "evidence": []})
+            emitter.observe_state({**base, "evidence": [second_reference]})
+            await asyncio.sleep(0)
+            return {
+                **base,
+                "evidence": [second_reference],
+                "final_status": "completed",
+            }
+
+    app = create_app(agent_runner=ChangingEvidenceRunner(), text_chunk_delay=0)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/chat",
+            json={"request_id": "req-reference-reset", "query": "测试证据重置"},
+        )
+
+    reference_data = [
+        event["data"]
+        for event in parse_sse(response.text)
+        if event["type"] == "reference"
+    ]
+    assert reference_data[0]["parent_id"] == "SOURCE@2024#1"
+    assert reference_data[1]["reset"] is True
+    assert reference_data[2]["parent_id"] == "SOURCE@2025#2"
+    assert reference_data[0]["generation"] < reference_data[2]["generation"]
+
+
 @pytest.mark.parametrize(
     ("runner", "expected_code"),
     [
@@ -388,6 +594,20 @@ def test_frontend_static_assets_are_served_with_required_workspaces() -> None:
     assert "SSEFrameParser" in javascript.text
     assert "StreamSession" in javascript.text
     assert "runContractSelfTests" in javascript.text
-    assert 'const TRACE_FIELDS = ["node", "tool", "duration_ms", "status"]' in (
+    assert "renderMarkdownInto" in javascript.text
+    assert "appendInlineMarkdown" in javascript.text
+    assert "data.reset === true" in javascript.text
+    assert "resetReferences" in javascript.text
+    assert "referenceGeneration" in javascript.text
+    assert "ANSWER_RENDER_INTERVAL_MS" in javascript.text
+    assert "scheduleAnswerRender" in javascript.text
+    assert "if (firstLine)" in javascript.text
+    assert "event.isComposing" in javascript.text
+    assert "event.shiftKey" in javascript.text
+    assert 'this.elements.queryInput.value = "";' in javascript.text
+    assert 'this.elements.controlInput.value = "";' in javascript.text
+    assert "validation_action" in javascript.text
+    assert "failure_codes" in javascript.text
+    assert 'const TRACE_FIELDS = [' in (
         javascript.text
     )

@@ -430,6 +430,8 @@ def test_agent_state_records_routing_evidence_and_final_outcome() -> None:
         "evidence",
         "answer",
         "citations_valid",
+        "citation_failures",
+        "retry_action",
         "retry_count",
         "final_status",
         "trace",

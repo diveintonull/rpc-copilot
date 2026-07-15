@@ -130,6 +130,7 @@ class FakeLLM:
         extracted_controls: list[dict] | None = None,
         gap_matrix: list[dict] | None = None,
         rewritten_query: str = "rewritten query",
+        repaired_answer: str | None = None,
     ) -> None:
         self.answer = answer
         self.calls: list[dict] = []
@@ -155,6 +156,8 @@ class FakeLLM:
         self.gap_mapping_calls: list[dict] = []
         self.rewritten_query = rewritten_query
         self.rewrite_calls: list[dict] = []
+        self.repaired_answer = repaired_answer or answer
+        self.repair_calls: list[dict] = []
 
     def answer_regulation(
         self,
@@ -220,6 +223,25 @@ class FakeLLM:
             {"query": query, "failures": failures}
         )
         return self.rewritten_query
+
+    def repair_regulation_answer(
+        self,
+        query: str,
+        answer: str,
+        evidence: list[dict],
+        failures: list[dict],
+        skill_text: str = "",
+    ) -> str:
+        call = {
+            "query": query,
+            "answer": answer,
+            "evidence": evidence,
+            "failures": failures,
+        }
+        if skill_text:
+            call["skill_text"] = skill_text
+        self.repair_calls.append(call)
+        return self.repaired_answer
 
 
 class FakeEntailmentEvaluator:
@@ -510,6 +532,74 @@ def test_clause_comparison_calls_tool_once_and_preserves_both_sides() -> None:
         "left_found": True,
         "right_found": True,
     }
+
+
+def test_clause_comparison_can_retrieve_source_scoped_sides_without_sections() -> None:
+    left_evidence = {
+        "parent_id": "GBT-22239@2019#8.1.4.1",
+        "source_id": "GBT-22239",
+        "version": "2019",
+        "section_number": "8.1.4.1",
+        "text": "等级保护身份鉴别要求。",
+    }
+    right_evidence = {
+        "parent_id": "GBT-35273@2020#7.3",
+        "source_id": "GBT-35273",
+        "version": "2020",
+        "section_number": "7.3",
+        "text": "个人信息系统身份鉴别要求。",
+    }
+
+    class SourceScopedTools(FakeTools):
+        def search_regulation(self, query, source_ids=None):
+            self.calls.append(
+                {
+                    "tool": "search_regulation",
+                    "query": query,
+                    "source_ids": source_ids,
+                }
+            )
+            if source_ids == ["GBT-22239"]:
+                return [left_evidence]
+            if source_ids == ["GBT-35273"]:
+                return [right_evidence]
+            return []
+
+    plan = {
+        "left": {
+            "source_id": "GBT-22239",
+            "version": "2019",
+            "section_number": "",
+            "search_query": "身份鉴别要求",
+        },
+        "right": {
+            "source_id": "GBT-35273",
+            "version": "2020",
+            "section_number": "",
+            "search_query": "身份鉴别要求",
+        },
+        "dimensions": ["要求", "范围"],
+    }
+    tools = SourceScopedTools()
+    llm = FakeLLM(comparison_plan=plan)
+    state: AgentState = {
+        "query": "比较两份标准的身份鉴别要求",
+        "tool_calls": [],
+        "trace": [
+            {"node": "route_intent", "intent": "clause_comparison"}
+        ],
+    }
+
+    update = execute_clause_comparison(state, tools, llm)
+
+    assert update["evidence"] == [left_evidence, right_evidence]
+    assert [call["source_ids"] for call in tools.calls] == [
+        ["GBT-22239"],
+        ["GBT-35273"],
+    ]
+    assert len(update["tool_calls"]) == 2
+    assert update["trace"][-1]["tool"] == "search_regulation"
+    assert llm.comparison_answer_calls
 
 
 @pytest.mark.parametrize("missing_side", ["left", "right"])
@@ -1069,6 +1159,48 @@ def test_graph_records_supported_citation_validation_in_trace() -> None:
     ]
 
 
+def test_regulation_multi_citation_claim_is_validated_jointly() -> None:
+    first = {
+        "parent_id": "GBT-22239@2019#7.1.5.1",
+        "source_id": "GBT-22239",
+        "version": "2019",
+        "section_number": "7.1.5.1",
+        "text": "应对系统管理员进行身份鉴别。",
+        "score": 0.91,
+    }
+    second = {
+        **first,
+        "parent_id": "GBT-22239@2019#8.1.5.1",
+        "section_number": "8.1.5.1",
+    }
+    tools = FakeTools(search_results=[first, second])
+    llm = FakeLLM(answer="两个安全等级均要求鉴别系统管理员[1][2]。")
+    evaluator = FakeEntailmentEvaluator(supported=True)
+    graph = build_graph(
+        lambda _query, _control_text: "regulation_qa",
+        tools,
+        llm,
+        entailment_evaluator=evaluator,
+    )
+
+    result = graph.invoke(
+        {
+            "request_id": "req-joint-regulation-citation",
+            "query": "不同安全等级对管理员有什么要求？",
+            "control_text": "",
+            "tool_calls": [],
+            "trace": [{"node": "received"}],
+        }
+    )
+
+    assert result["final_status"] == "completed"
+    assert len(evaluator.calls) == 1
+    combined = evaluator.calls[0]["evidence"]
+    assert combined["joint"] is True
+    assert first["text"] in combined["text"]
+    assert second["text"] in combined["text"]
+
+
 def test_graph_refuses_unsupported_citation_and_records_reason() -> None:
     evidence = {
         "parent_id": "GBT-22239@2019#8.1.4.1",
@@ -1114,7 +1246,7 @@ def test_graph_refuses_unsupported_citation_and_records_reason() -> None:
     }
 
 
-def test_first_validation_failure_rewrites_once_then_completes() -> None:
+def test_first_validation_failure_repairs_answer_without_retrieval() -> None:
     evidence = {
         "parent_id": "GBT-22239@2019#8.1.4.1",
         "source_id": "GBT-22239",
@@ -1125,8 +1257,8 @@ def test_first_validation_failure_rewrites_once_then_completes() -> None:
     }
     tools = FakeTools(search_results=[evidence])
     llm = FakeLLM(
-        answer="管理员应采用组合身份鉴别技术[1]。",
-        rewritten_query="管理员组合身份鉴别法规证据",
+        answer="版本说明\n未发现版本冲突[1]。",
+        repaired_answer="管理员应采用组合身份鉴别技术[1]。",
     )
     evaluator = FakeEntailmentEvaluator(decisions=[False, True])
     graph = build_graph(
@@ -1148,19 +1280,17 @@ def test_first_validation_failure_rewrites_once_then_completes() -> None:
     )
 
     assert [call["query"] for call in tools.calls] == [
-        "管理员登录有什么要求？",
-        "管理员组合身份鉴别法规证据",
+        "管理员登录有什么要求？"
     ]
-    assert llm.rewrite_calls == [
+    assert llm.rewrite_calls == []
+    assert len(llm.repair_calls) == 1
+    assert llm.repair_calls[0]["query"] == "管理员登录有什么要求？"
+    assert llm.repair_calls[0]["answer"] == "版本说明\n未发现版本冲突[1]。"
+    assert llm.repair_calls[0]["failures"] == [
         {
-            "query": "管理员登录有什么要求？",
-            "failures": [
-                {
-                    "code": "unsupported_claim",
-                    "claim": "管理员应采用组合身份鉴别技术",
-                    "citation": 1,
-                }
-            ],
+            "code": "unsupported_claim",
+            "claim": "未发现版本冲突",
+            "citation": 1,
         }
     ]
     assert result["retry_count"] == 1
@@ -1196,7 +1326,7 @@ def test_second_validation_failure_refuses_without_third_attempt() -> None:
     tools = FakeTools(search_results=[evidence])
     llm = FakeLLM(
         answer="管理员必须每天更换密码[1]。",
-        rewritten_query="管理员密码定期更换法规证据",
+        repaired_answer="管理员必须每天更换密码[1]。",
     )
     evaluator = FakeEntailmentEvaluator(decisions=[False, False])
     graph = build_graph(
@@ -1217,8 +1347,9 @@ def test_second_validation_failure_refuses_without_third_attempt() -> None:
         }
     )
 
-    assert len(tools.calls) == 2
-    assert len(llm.rewrite_calls) == 1
+    assert len(tools.calls) == 1
+    assert len(llm.rewrite_calls) == 0
+    assert len(llm.repair_calls) == 1
     assert len(evaluator.calls) == 2
     assert result["retry_count"] == 1
     assert result["citations_valid"] is False

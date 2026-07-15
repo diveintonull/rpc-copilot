@@ -36,12 +36,12 @@ flowchart LR
 
 - **Graph** owns routing, state transitions, retry limits, cancellation, and terminal status.
 - **Skills** provide task-specific SOPs and refusal boundaries; only the matched Skill is loaded.
-- **Tools** perform deterministic search, clause lookup, comparison, control extraction, and gap mapping.
+- **Tools** perform deterministic search and exact clause lookup; the LLM extracts controls and maps gaps only inside the governed Graph workflow.
 - **Validation** checks citations, versions, evidence support, and unsafe compliance claims.
 
 ## Quickstart
 
-The reproducible Docker demo needs Docker Compose v2 but does not need an API key.
+The real application needs Docker Compose v2 and an OpenAI-compatible chat-completions endpoint.
 
 Create `.env`:
 
@@ -51,19 +51,23 @@ Copy-Item .env.example .env
 
 macOS/Linux users can run `cp .env.example .env` instead.
 
+Set `LLM_API_KEY`, `LLM_BASE_URL`, and `LLM_MODEL` in `.env`. Keep `APP_RUN_MODE=real`.
+
 Start the app and Qdrant:
 
 ```bash
 docker compose up --build --wait
 ```
 
+On the first start, the app downloads the embedding and reranking models and builds the Qdrant index from the governed parsed corpus. Later starts reuse the model and Qdrant volumes.
+
 Open [http://127.0.0.1:8000](http://127.0.0.1:8000).
 
 Try these examples:
 
 ```text
-Regulation Q&A:      管理员身份鉴别有哪些要求？
-Clause comparison:  比较两项身份鉴别条款的要求和适用范围
+Regulation Q&A:      《数据安全法》对数据安全管理制度有什么要求？
+Clause comparison:  比较《数据安全法》与《网络安全法》的安全事件处置要求
 Gap analysis:       检查管理员身份鉴别控制差距
 Current control:    管理员目前仅使用账号和密码登录，尚未启用多因素认证。
 ```
@@ -74,7 +78,7 @@ Stop the services with:
 docker compose down
 ```
 
-> The Docker UI uses deterministic fixtures to make deployment, SSE, evidence cards, Trace, and cancellation reproducible. It does not pretend that the fixture answers came from the real model or Qdrant. Real retrieval and model quality are measured separately by the evaluation suite.
+For an offline UI/streaming check, set `APP_RUN_MODE=demo`. Demo mode is deliberately narrow and is not the default application runtime.
 
 ## Development and tests
 
@@ -89,11 +93,11 @@ uv run python -m evals.validate_dataset evals/dataset.jsonl
 Verified result:
 
 ```text
-270 passed
+302 passed
 valid=60 invalid=0
 ```
 
-Raw corpus files and built indexes are intentionally excluded from Git. Source provenance is tracked in [SOURCES.md](SOURCES.md).
+Raw source files and built vector indexes are excluded from Git. The governed parsed corpus needed for first-start indexing is included; provenance is tracked in [SOURCES.md](SOURCES.md).
 
 ## Safety and limitations
 
@@ -103,7 +107,7 @@ Raw corpus files and built indexes are intentionally excluded from Git. Source p
 - Gap analysis cannot declare an enterprise definitively compliant or illegal.
 - The Graph retries at most once and supports real task cancellation.
 - External Trace exposes an allowlist of operational fields, not API keys, Skill bodies, full prompts, or hidden reasoning.
-- The Docker deployment is a deterministic demo, not a production composition root.
+- The Docker deployment is a local portfolio deployment, not a hardened production environment.
 - The current corpus covers five governed sources and 60 evaluation cases, not every jurisdiction or framework.
 - Human review remains mandatory for legal interpretation and final compliance decisions.
 

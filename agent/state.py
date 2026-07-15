@@ -54,6 +54,8 @@ class AgentState(TypedDict, total=False):
     evidence: list[dict]
     answer: str
     citations_valid: bool
+    citation_failures: list[dict]
+    retry_action: str
     retry_count: int
     final_status: FinalStatus
     trace: list[dict]

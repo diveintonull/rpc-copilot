@@ -471,6 +471,10 @@ textarea:focus-visible,
   overflow-wrap: anywhere;
 }
 
+.message-assistant .message-content {
+  white-space: normal;
+}
+
 .message-user .message-content {
   border-color: #e5dbc2;
   border-radius: 15px 4px 15px 15px;
@@ -479,6 +483,99 @@ textarea:focus-visible,
 
 .message-content p {
   margin: 0;
+}
+
+.message-content > * + * {
+  margin-top: 10px;
+}
+
+.message-content h1,
+.message-content h2,
+.message-content h3,
+.message-content h4,
+.message-content h5,
+.message-content h6 {
+  margin-bottom: 0;
+  color: var(--ink-900);
+  font-size: 1em;
+  line-height: 1.45;
+}
+
+.message-content h1,
+.message-content h2 {
+  font-size: 1.16em;
+}
+
+.message-content ul,
+.message-content ol {
+  margin-bottom: 0;
+  padding-left: 24px;
+}
+
+.message-content li + li {
+  margin-top: 4px;
+}
+
+.message-content code {
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: #edf2ef;
+  font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  font-size: 0.88em;
+}
+
+.message-content pre {
+  overflow-x: auto;
+  margin-bottom: 0;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--ink-900);
+  color: #f3f7f5;
+  white-space: pre;
+}
+
+.message-content pre code {
+  padding: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.message-content blockquote {
+  margin-bottom: 0;
+  padding-left: 12px;
+  border-left: 3px solid var(--mint-500);
+  color: var(--ink-600);
+}
+
+.message-content hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+.markdown-table-wrap {
+  overflow-x: auto;
+}
+
+.message-content table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.93em;
+  white-space: normal;
+}
+
+.message-content th,
+.message-content td {
+  min-width: 110px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.message-content th {
+  background: #edf4f0;
+  color: var(--ink-900);
+  font-weight: 750;
 }
 
 .message.is-error .message-content {

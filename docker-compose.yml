@@ -6,11 +6,14 @@ services:
       context: .
       dockerfile: Dockerfile
     environment:
-      APP_RUN_MODE: ${APP_RUN_MODE:-demo}
+      APP_RUN_MODE: ${APP_RUN_MODE:-real}
       EMBED_MODEL_SOURCE: ${EMBED_MODEL_SOURCE:-modelscope}
+      RERANK_MODEL_SOURCE: ${RERANK_MODEL_SOURCE:-modelscope}
+      MODEL_DEVICE: ${MODEL_DEVICE:-cpu}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_BASE_URL: ${LLM_BASE_URL:-}
       LLM_MODEL: ${LLM_MODEL:-}
+      LLM_VALIDATE_ENTAILMENT: ${LLM_VALIDATE_ENTAILMENT:-true}
       QDRANT_URL: http://qdrant:6333
     ports:
       - "127.0.0.1:${APP_HOST_PORT:-8000}:8000"
@@ -31,7 +34,7 @@ services:
       interval: 10s
       timeout: 3s
       retries: 6
-      start_period: 10s
+      start_period: 20m
     restart: unless-stopped
 
   qdrant:

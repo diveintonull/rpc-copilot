@@ -36,12 +36,12 @@ flowchart LR
 
 - **Graph** 负责路由、状态流转、重试上限、取消和终止状态。
 - **Skills** 提供任务 SOP 和拒答边界，只加载当前匹配的 Skill。
-- **Tools** 执行确定性搜索、条款获取、比较、控制提取和差距映射。
+- **Tools** 执行确定性搜索和精确条款获取；控制提取与差距映射由 LLM 在受治理的 Graph 流程内完成。
 - **Validation** 检查引用、版本、证据支持情况和越权合规结论。
 
 ## 快速启动
 
-可复现 Docker Demo 需要 Docker Compose v2，但不需要 API key。
+真实应用需要 Docker Compose v2，以及一个兼容 OpenAI Chat Completions 的模型端点。
 
 创建 `.env`：
 
@@ -51,19 +51,23 @@ Copy-Item .env.example .env
 
 macOS/Linux 用户可以改用 `cp .env.example .env`。
 
+在 `.env` 中填写 `LLM_API_KEY`、`LLM_BASE_URL` 和 `LLM_MODEL`，并保留 `APP_RUN_MODE=real`。
+
 启动应用和 Qdrant：
 
 ```bash
 docker compose up --build --wait
 ```
 
+首次启动会下载 Embedding 与 Rerank 模型，并根据仓库中的受治理解析语料构建 Qdrant 索引；后续启动会复用模型与 Qdrant volume。
+
 打开 [http://127.0.0.1:8000](http://127.0.0.1:8000)。
 
 可以尝试：
 
 ```text
-法规问答：      管理员身份鉴别有哪些要求？
-条款比较：      比较两项身份鉴别条款的要求和适用范围
+法规问答：      《数据安全法》对数据安全管理制度有什么要求？
+条款比较：      比较《数据安全法》与《网络安全法》的安全事件处置要求
 控制差距分析：  检查管理员身份鉴别控制差距
 企业当前控制：  管理员目前仅使用账号和密码登录，尚未启用多因素认证。
 ```
@@ -74,7 +78,7 @@ docker compose up --build --wait
 docker compose down
 ```
 
-> Docker UI 使用确定性 fixture，确保部署、SSE、证据卡片、Trace 和取消可以稳定复现。它不会假装 fixture 答案来自真实模型或 Qdrant；真实检索和模型质量由独立评测套件衡量。
+如果只想离线检查 UI 与流式协议，可以设置 `APP_RUN_MODE=demo`。Demo 模式范围很窄，也不再是应用默认运行方式。
 
 ## 开发与测试
 
@@ -89,11 +93,11 @@ uv run python -m evals.validate_dataset evals/dataset.jsonl
 当前验证结果：
 
 ```text
-270 passed
+302 passed
 valid=60 invalid=0
 ```
 
-原始语料和构建后的索引有意排除在 Git 之外。来源记录见 [SOURCES.md](SOURCES.md)。
+原始来源文件和构建后的向量索引有意排除在 Git 之外；首次建索引所需的受治理解析语料会纳入仓库。来源记录见 [SOURCES.md](SOURCES.md)。
 
 ## 安全边界与局限
 
@@ -103,7 +107,7 @@ valid=60 invalid=0
 - 差距分析不能直接宣称企业已经确定合规或违法。
 - Graph 最多重试一次，并支持真实任务取消。
 - 外部 Trace 只暴露白名单运行字段，不包含 API key、Skill 正文、完整 Prompt 或隐藏推理。
-- Docker 部署是确定性 Demo，不是生产组合根。
+- Docker 部署面向本地作品集演示，不是经过加固的生产环境。
 - 当前语料覆盖五个受治理来源和 60 个评测样例，不代表所有司法辖区或框架。
 - 法律解释和最终合规判断仍必须由人工复核。
 

@@ -1,4 +1,4 @@
-"""Container composition root for the reproducible local demo."""
+"""Deployment composition root for real and deterministic Agent modes."""
 
 from __future__ import annotations
 
@@ -8,12 +8,23 @@ from collections.abc import Mapping
 from typing import Any
 
 from qdrant_client import QdrantClient
+from dotenv import load_dotenv
 
 from api.main import ChatRequest, ReadinessProbe, create_app
+from api.real_runtime import build_real_runner
+from ingest.index import COLLECTION, PARENTS_STORE
 
 
 DEFAULT_QDRANT_URL = "http://localhost:6333"
-SUPPORTED_RUN_MODES = {"demo"}
+SUPPORTED_RUN_MODES = {"demo", "real"}
+DEMO_TOPIC_TERMS = (
+    "身份鉴别",
+    "鉴别技术",
+    "authentication",
+    "multi-factor",
+    "multifactor",
+    "mfa",
+)
 
 AUTHENTICATION_EVIDENCE = {
     "parent_id": "GBT-22239@2019#8.1.4.1",
@@ -23,6 +34,8 @@ AUTHENTICATION_EVIDENCE = {
     "text": "应采用两种或两种以上组合的鉴别技术对用户进行身份鉴别。",
     "score": 0.94,
 }
+
+load_dotenv()
 ISO_AUTHENTICATION_EVIDENCE = {
     "parent_id": "ISO-27001@2022#A.5.17",
     "source_id": "ISO/IEC 27001",
@@ -45,10 +58,34 @@ def _trace(node: str, tool: str, duration_ms: int) -> dict[str, Any]:
     }
 
 
+def _supports_demo_topic(query: str) -> bool:
+    normalized = query.casefold()
+    return any(term in normalized for term in DEMO_TOPIC_TERMS)
+
+
+def _demo_scope_refusal() -> Mapping[str, Any]:
+    return {
+        "answer": (
+            "当前确定性 Demo 只支持身份鉴别场景；"
+            "该问题不会复用固定答案。真实法规问答需要配置受治理语料、"
+            "Qdrant 索引和模型端点。"
+        ),
+        "evidence": [],
+        "recommendations": [
+            "请选择界面中的身份鉴别示例，或配置真实 Agent 运行环境。"
+        ],
+        "trace": [_trace("demo_scope_guard", "fixture_catalog", 1)],
+        "final_status": "refused",
+    }
+
+
 async def demo_runner(request: ChatRequest) -> Mapping[str, Any]:
     """Return deterministic evidence-linked fixtures for deployment checks."""
     if "慢速" in request.query:
         await asyncio.sleep(30)
+
+    if not _supports_demo_topic(request.query):
+        return _demo_scope_refusal()
 
     if request.mode == "clause_comparison":
         return {
@@ -141,23 +178,70 @@ async def qdrant_ready() -> bool:
         return False
 
 
+async def real_dependencies_ready() -> bool:
+    """Require both the parent store and a non-empty real Qdrant collection."""
+    if not PARENTS_STORE.is_file():
+        return False
+    url = os.environ.get("QDRANT_URL", DEFAULT_QDRANT_URL)
+
+    def check() -> bool:
+        client = QdrantClient(url=url, timeout=2)
+        try:
+            if not client.collection_exists(COLLECTION):
+                return False
+            return client.count(COLLECTION, exact=False).count > 0
+        finally:
+            client.close()
+
+    try:
+        return await asyncio.to_thread(check)
+    except Exception:
+        return False
+
+
+def resolve_run_mode() -> str:
+    """Prefer real mode when LLM credentials exist unless explicitly set."""
+    configured = os.environ.get("APP_RUN_MODE", "").strip().casefold()
+    if configured:
+        return configured
+    if (
+        os.environ.get("LLM_API_KEY", "").strip()
+        and os.environ.get("LLM_MODEL", "").strip()
+    ):
+        return "real"
+    return "demo"
+
+
 def create_deployment_app(
     *,
     readiness_probe: ReadinessProbe | None = None,
     run_mode: str | None = None,
+    real_runner=None,
 ):
     """Build the explicit container app and reject unknown run modes early."""
-    selected_mode = run_mode or os.environ.get("APP_RUN_MODE", "demo")
+    selected_mode = run_mode or resolve_run_mode()
     if selected_mode not in SUPPORTED_RUN_MODES:
         supported = ", ".join(sorted(SUPPORTED_RUN_MODES))
         raise RuntimeError(
             f"unsupported APP_RUN_MODE {selected_mode!r}; expected {supported}"
         )
-    return create_app(
-        agent_runner=demo_runner,
-        readiness_probe=readiness_probe or qdrant_ready,
+    runner = (
+        demo_runner
+        if selected_mode == "demo"
+        else (real_runner or build_real_runner())
+    )
+    selected_probe = readiness_probe or (
+        qdrant_ready
+        if selected_mode == "demo"
+        else real_dependencies_ready
+    )
+    application = create_app(
+        agent_runner=runner,
+        readiness_probe=selected_probe,
         text_chunk_size=12,
     )
+    application.state.run_mode = selected_mode
+    return application
 
 
 app = create_deployment_app()
