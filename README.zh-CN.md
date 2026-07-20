@@ -6,6 +6,8 @@
 
 GRC Copilot 是一个面向治理、风险与合规工作的作品集项目。它组合了版本化法规证据、父子分块检索、LangGraph 编排、渐进式 Skills、确定性引用校验、兼容 MCP 的 Tools，以及可观察的流式 UI。
 
+法规问答可以选择启用**多模态 RAG**：ColQwen2 直接检索 PDF 整页图像，Qdrant 使用 MaxSim 重排，再与文本条款检索融合；视觉大模型会真正读取被引用的页面图片，适合表格、图示和依赖版面的内容。完整说明见 [MULTIMODAL_RAG.md](MULTIMODAL_RAG.md)。
+
 项目遵守一个简单原则：回答流畅还不够。重要结论应该指向具体来源、版本和章节；证据不足时，Agent 应该拒答。
 
 ## 三种工作模式
@@ -93,7 +95,7 @@ uv run python -m evals.validate_dataset evals/dataset.jsonl
 当前验证结果：
 
 ```text
-302 passed
+320 passed
 valid=60 invalid=0
 ```
 

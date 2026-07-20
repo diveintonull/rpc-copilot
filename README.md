@@ -6,6 +6,8 @@ English | [简体中文](README.zh-CN.md)
 
 GRC Copilot is a portfolio project for governance, risk, and compliance workflows. It combines versioned regulatory evidence, parent-child retrieval, LangGraph orchestration, progressive Skills, deterministic citation checks, MCP-compatible tools, and an observable streaming UI.
 
+Regulation Q&A can optionally use **multimodal RAG**: ColQwen2 retrieves rendered PDF pages with Qdrant MaxSim, the result is fused with clause retrieval, and a vision-capable chat model reads the cited page image. This is useful for tables, diagrams, and layout that text chunking loses.
+
 The core rule is simple: a fluent answer is not enough. Important claims should point to a specific source, version, and section; when the evidence is insufficient, the Agent should refuse.
 
 ## What it does
@@ -78,6 +80,8 @@ Stop the services with:
 docker compose down
 ```
 
+To enable multimodal RAG, place the governed PDFs in `data/raw/`, set `MULTIMODAL_RAG_ENABLED=true`, and configure `LLM_VISION_MODEL` if `LLM_MODEL` cannot accept `image_url` content. The first start renders the PDFs and builds the separate `grc_visual_pages` collection. See [MULTIMODAL_RAG.md](MULTIMODAL_RAG.md) for the data flow, local commands, resource costs, and evaluation workflow.
+
 For an offline UI/streaming check, set `APP_RUN_MODE=demo`. Demo mode is deliberately narrow and is not the default application runtime.
 
 ## Development and tests
@@ -93,7 +97,7 @@ uv run python -m evals.validate_dataset evals/dataset.jsonl
 Verified result:
 
 ```text
-302 passed
+320 passed
 valid=60 invalid=0
 ```
 

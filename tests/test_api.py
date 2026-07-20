@@ -147,6 +147,42 @@ def test_chat_streams_text_reference_safe_trace_and_terminal_done() -> None:
     assert app.state.task_manager.active_count == 0
 
 
+def test_visual_reference_exposes_page_url_but_not_private_file_path() -> None:
+    async def runner(request) -> dict:
+        state = successful_state(request)
+        state["evidence"] = [
+            {
+                **state["evidence"][0],
+                "parent_id": "GBT-22239@2019#page=12",
+                "section_number": "page 12",
+                "modality": "image",
+                "page_number": 12,
+                "title": "网络安全等级保护基本要求",
+                "image_url": "/visual-assets/GBT-22239-2019/page-0012.png",
+                "image_path": "C:/private/data/visual/page-0012.png",
+            }
+        ]
+        return state
+
+    app = create_app(agent_runner=runner, text_chunk_delay=0)
+    with TestClient(app) as client:
+        response = client.post(
+            "/chat",
+            json={"request_id": "req-visual-reference", "query": "看表格"},
+        )
+
+    reference = next(
+        event["data"]
+        for event in parse_sse(response.text)
+        if event["type"] == "reference"
+    )
+    assert reference["modality"] == "image"
+    assert reference["page_number"] == 12
+    assert reference["image_url"].startswith("/visual-assets/")
+    assert "image_path" not in reference
+    assert "private" not in response.text
+
+
 def test_trace_exposes_safe_citation_failure_summary_without_claim_text() -> None:
     async def runner(request) -> dict:
         state = successful_state(request)

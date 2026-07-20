@@ -1,7 +1,7 @@
 [project]
 name = "grc-copilot"
 version = "0.1.0"
-description = "Add your description here"
+description = "Evidence-first multimodal GRC agent with versioned citations"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
@@ -12,6 +12,8 @@ dependencies = [
     "mcp>=1.28.1",
     "mineru[core]>=3.4.3",
     "openai>=2.44.0",
+    "pillow>=12.3.0",
+    "pymupdf>=1.28.0",
     "pymupdf4llm>=1.28.0",
     "python-dotenv>=1.2.2",
     "qdrant-client>=1.18.0",
@@ -19,6 +21,7 @@ dependencies = [
     "sentence-transformers>=5.6.0",
     "torch>=2.11.0",
     "torchvision>=0.26.0",
+    "transformers>=4.57.6",
     "uvicorn>=0.51.0",
 ]
 
@@ -48,10 +51,14 @@ container = [
     "langgraph>=1.2.9",
     "modelscope>=1.35.0",
     "openai>=2.44.0",
+    "pillow>=12.3.0",
+    "pymupdf>=1.28.0",
     "python-dotenv>=1.2.2",
     "qdrant-client>=1.18.0",
     "sentence-transformers>=5.6.0",
     "torch>=2.11.0",
+    "torchvision>=0.26.0",
+    "transformers>=4.57.6",
     "uvicorn>=0.51.0",
 ]
 dev = [

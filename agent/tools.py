@@ -21,6 +21,7 @@ ToolBackendName = Literal["local", "mcp"]
 SearchTool = Callable[[str, list[str] | None], list[Evidence]]
 ClauseTool = Callable[[str, str, str], Evidence | None]
 ComparisonTool = Callable[[dict, dict, list[str]], dict]
+MultimodalSearchTool = Callable[[str, list[str] | None], list[Evidence]]
 MCPCallTool = Callable[[str, dict[str, Any]], Mapping[str, Any]]
 
 
@@ -284,6 +285,46 @@ class LocalToolBackend:
         dimensions: list[str],
     ) -> dict:
         return self._comparison_tool(left, right, dimensions)
+
+
+class MultimodalLocalToolBackend(LocalToolBackend):
+    """Use hybrid clause/page retrieval for regulation Q&A only."""
+
+    def __init__(
+        self,
+        *,
+        multimodal_search_tool: MultimodalSearchTool | None = None,
+        search_tool: SearchTool = search_regulation,
+        clause_tool: ClauseTool = get_clause,
+        comparison_tool: ComparisonTool = compare_clauses,
+    ) -> None:
+        super().__init__(
+            search_tool=search_tool,
+            clause_tool=clause_tool,
+            comparison_tool=comparison_tool,
+        )
+        if multimodal_search_tool is None:
+            from rag.multimodal import search_multimodal_evidence
+
+            def default_multimodal_search(
+                query: str,
+                source_ids: list[str] | None,
+            ) -> list[Evidence]:
+                return search_multimodal_evidence(
+                    query,
+                    source_ids,
+                    text_search=self.search_regulation,
+                )
+
+            multimodal_search_tool = default_multimodal_search
+        self._multimodal_search_tool = multimodal_search_tool
+
+    def search_regulation_multimodal(
+        self,
+        query: str,
+        source_ids: list[str] | None = None,
+    ) -> list[Evidence]:
+        return self._multimodal_search_tool(query, source_ids)
 
 
 @dataclass(frozen=True)

@@ -247,3 +247,42 @@ def test_comparison_can_validate_a_claim_against_joint_citations() -> None:
         f"{left['parent_id']} + {right['parent_id']}"
     )
     assert combined["joint"] is True
+
+
+def test_joint_citation_preserves_rendered_page_for_vision_validation() -> None:
+    evaluator = FakeEntailmentEvaluator(supported=True)
+    text = regulation_evidence()
+    visual = {
+        "parent_id": "GBT-22239@2019#page=12",
+        "source_id": "GBT-22239",
+        "version": "2019",
+        "section_number": "page 12",
+        "text": "页面 OCR",
+        "score": 0.9,
+        "modality": "image",
+        "page_number": 12,
+        "image_path": "data/visual/pages/page-0012.png",
+        "image_url": "/visual-assets/page-0012.png",
+    }
+
+    result = validate_citations(
+        "条款与表格共同支持该要求[1][2]。",
+        [text, visual],
+        entailment_evaluator=evaluator,
+        joint_citations=True,
+    )
+
+    assert result["valid"] is True
+    combined = evaluator.calls[0]["evidence"]
+    assert combined["visual_evidence"] == [
+        {
+            "citation": 2,
+            "parent_id": visual["parent_id"],
+            "source_id": visual["source_id"],
+            "version": visual["version"],
+            "section_number": visual["section_number"],
+            "page_number": 12,
+            "image_path": visual["image_path"],
+            "image_url": visual["image_url"],
+        }
+    ]

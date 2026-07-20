@@ -18,6 +18,16 @@ data/*
 data/parsed/*
 !data/parsed/*.md
 !data/parsed/_parents_store.json
+!data/raw/
+data/raw/*
+!data/raw/*.pdf
+!data/mineru/
+data/mineru/*
+!data/mineru/*/
+data/mineru/*/*
+!data/mineru/*/ocr/
+data/mineru/*/ocr/*
+!data/mineru/*/ocr/*_content_list.json
 docs/
 results/
 tests/

@@ -865,16 +865,35 @@ class GRCApplication {
       ? data.text
       : "该引用未包含可展示的条款正文。";
 
+    let visual = null;
+    if (data.modality === "image" && isNonEmptyString(data.image_url)) {
+      visual = this.document.createElement("img");
+      visual.className = "evidence-page-image";
+      visual.src = data.image_url;
+      visual.alt = Number.isInteger(data.page_number)
+        ? `${source} page ${data.page_number}`
+        : `${source} rendered page`;
+      visual.loading = "lazy";
+      visual.decoding = "async";
+    }
+
     const meta = this.document.createElement("div");
     meta.className = "evidence-meta";
-    for (const value of [data.version, data.parent_id]) {
+    const pageLabel = Number.isInteger(data.page_number)
+      ? `PAGE ${data.page_number}`
+      : null;
+    for (const value of [data.modality, pageLabel, data.version, data.parent_id]) {
       if (isNonEmptyString(value)) {
         const item = this.document.createElement("span");
         item.textContent = value;
         meta.append(item);
       }
     }
-    card.append(header, title, text, meta);
+    card.append(header, title);
+    if (visual) {
+      card.append(visual);
+    }
+    card.append(text, meta);
     this.elements.evidenceList.append(card);
     this.elements.evidenceEmpty.hidden = true;
     this.elements.evidenceCount.textContent = String(number);

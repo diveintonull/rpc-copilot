@@ -1,0 +1,10 @@
+{"id":"mm-001","question":"GB/T 22239-2019 表A.1中，第二级等级保护对象可能有哪些定级结果组合？","source_ids":["GBT-22239"],"gold_text_ids":["GBT-22239@2019#h578"],"gold_page_ids":["GBT-22239@2019#page=71"]}
+{"id":"mm-002","question":"GB/T 22239-2019 表A.2把身份鉴别、数据备份恢复分别标记为哪类安全要求？","source_ids":["GBT-22239"],"gold_text_ids":["GBT-22239@2019#h578"],"gold_page_ids":["GBT-22239@2019#page=72"]}
+{"id":"mm-003","question":"工业控制系统企业资源层应采用哪些等级保护技术要求？请按表G.1回答。","source_ids":["GBT-22239"],"gold_text_ids":["GBT-22239@2019#h595"],"gold_page_ids":["GBT-22239@2019#page=82"]}
+{"id":"mm-004","question":"根据表G.1，工业控制系统现场控制层的安全计算环境需要通用要求还是还要扩展要求？","source_ids":["GBT-22239"],"gold_text_ids":["GBT-22239@2019#h595"],"gold_page_ids":["GBT-22239@2019#page=82"]}
+{"id":"mm-005","question":"GB/T 35273-2020 表A.1列举了哪些网络身份标识信息？","source_ids":["GBT-35273"],"gold_text_ids":["GBT-35273@2020#h94"],"gold_page_ids":["GBT-35273@2020#page=22"]}
+{"id":"mm-006","question":"表A.1中个人生物识别信息的例子有哪些？","source_ids":["GBT-35273"],"gold_text_ids":["GBT-35273@2020#h94"],"gold_page_ids":["GBT-35273@2020#page=22"]}
+{"id":"mm-007","question":"GB/T 35273-2020 表B.1把哪些财产信息列为个人敏感信息？","source_ids":["GBT-35273"],"gold_text_ids":["GBT-35273@2020#h96"],"gold_page_ids":["GBT-35273@2020#page=23"]}
+{"id":"mm-008","question":"个人敏感信息示例表中的个人身份信息包括哪些证件？","source_ids":["GBT-35273"],"gold_text_ids":["GBT-35273@2020#h96"],"gold_page_ids":["GBT-35273@2020#page=23"]}
+{"id":"mm-009","question":"个人信息保护政策模板对跨境信息传输要求说明哪些内容？","source_ids":["GBT-35273"],"gold_text_ids":["GBT-35273@2020#h103"],"gold_page_ids":["GBT-35273@2020#page=29"]}
+{"id":"mm-010","question":"个人信息保护政策模板建议如何说明外部争议解决机构？","source_ids":["GBT-35273"],"gold_text_ids":["GBT-35273@2020#h103"],"gold_page_ids":["GBT-35273@2020#page=29"]}

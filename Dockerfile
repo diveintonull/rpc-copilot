@@ -20,8 +20,8 @@ RUN uv sync --frozen --no-dev --only-group container --no-install-project
 
 RUN groupadd --gid 10001 app \
     && useradd --uid 10001 --gid app --create-home app \
-    && mkdir -p /home/app/.cache \
-    && chown -R app:app /home/app
+    && mkdir -p /home/app/.cache /app/data/visual \
+    && chown -R app:app /home/app /app/data/visual
 
 COPY --chown=app:app . .
 

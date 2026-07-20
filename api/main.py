@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from api.events import EventType, SSEEvent, encode_sse, make_event
 from api.task_manager import DuplicateTaskError, TaskManager
+from ingest.visual import VISUAL_PAGES_ROOT
 
 
 DEFAULT_TEXT_CHUNK_SIZE = 24
@@ -36,6 +37,10 @@ REFERENCE_FIELDS = {
     "section_number",
     "text",
     "score",
+    "modality",
+    "page_number",
+    "title",
+    "image_url",
 }
 SAFE_CITATION_FAILURE_CODES = {
     "unknown_citation",
@@ -508,6 +513,11 @@ def create_app(
             raise HTTPException(status_code=404, detail="task not found")
         return {"request_id": request_id, "status": "cancelled"}
 
+    application.mount(
+        "/visual-assets",
+        StaticFiles(directory=VISUAL_PAGES_ROOT, check_dir=False),
+        name="visual-assets",
+    )
     application.mount(
         "/",
         StaticFiles(directory=WEB_DIRECTORY, html=True),

@@ -23,9 +23,16 @@ def _run_mode() -> str:
 def main() -> None:
     load_dotenv()
     if _run_mode() == "real":
-        from api.bootstrap import ensure_real_index
+        from api.bootstrap import ensure_real_index, ensure_visual_index
 
         ensure_real_index()
+        if (
+            os.environ.get("MULTIMODAL_RAG_ENABLED", "false")
+            .strip()
+            .casefold()
+            == "true"
+        ):
+            ensure_visual_index()
     uvicorn.run(
         "api.deployment:app",
         host="0.0.0.0",

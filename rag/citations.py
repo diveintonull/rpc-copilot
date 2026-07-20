@@ -184,6 +184,27 @@ def validate_citations(
                 ),
                 "score": None,
                 "joint": True,
+                "visual_evidence": [
+                    {
+                        "citation": citation,
+                        **{
+                            key: item[key]
+                            for key in (
+                                "parent_id",
+                                "source_id",
+                                "version",
+                                "section_number",
+                                "page_number",
+                                "image_path",
+                                "image_url",
+                            )
+                            if key in item
+                        },
+                    }
+                    for citation, item in cited_items
+                    if item.get("modality") == "image"
+                    and isinstance(item.get("image_path"), str)
+                ],
             }
             if not entailment_evaluator(claim, combined_evidence):
                 failures.append(

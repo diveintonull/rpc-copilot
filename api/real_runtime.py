@@ -9,11 +9,18 @@ from typing import Any
 
 from agent.graph import build_graph
 from agent.llm import OpenAICompatibleAgentLLM
-from agent.tools import LocalToolBackend
+from agent.tools import LocalToolBackend, MultimodalLocalToolBackend
 from api.main import ChatRequest
 
 
 GraphFactory = Callable[..., Any]
+
+
+def _boolean_setting(name: str, default: bool) -> bool:
+    raw = os.environ.get(name, str(default).lower()).strip().casefold()
+    if raw not in {"true", "false"}:
+        raise RuntimeError(f"{name} must be true or false")
+    return raw == "true"
 
 
 class RealAgentRunner:
@@ -123,20 +130,27 @@ def build_real_runner(
             api_key=api_key,
             base_url=base_url,
             model=model,
+            vision_model=os.environ.get("LLM_VISION_MODEL", "").strip()
+            or model,
         )
 
     if validate_entailment is None:
-        raw = os.environ.get("LLM_VALIDATE_ENTAILMENT", "true")
-        normalized = raw.strip().casefold()
-        if normalized not in {"true", "false"}:
-            raise RuntimeError(
-                "LLM_VALIDATE_ENTAILMENT must be true or false"
-            )
-        validate_entailment = normalized == "true"
+        validate_entailment = _boolean_setting(
+            "LLM_VALIDATE_ENTAILMENT",
+            True,
+        )
+
+    selected_tools = tools
+    if selected_tools is None:
+        selected_tools = (
+            MultimodalLocalToolBackend()
+            if _boolean_setting("MULTIMODAL_RAG_ENABLED", False)
+            else LocalToolBackend()
+        )
 
     return RealAgentRunner(
         llm=selected_llm,
-        tools=tools or LocalToolBackend(),
+        tools=selected_tools,
         graph_factory=graph_factory,
         validate_entailment=validate_entailment,
     )

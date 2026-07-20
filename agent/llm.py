@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import re
 from contextlib import contextmanager
 from contextvars import ContextVar
 from collections.abc import Mapping
+from functools import lru_cache
+from io import BytesIO
+from pathlib import Path
 from typing import Any, Protocol
+
+from ingest.visual import VISUAL_PAGES_ROOT
 
 
 DEFAULT_MAX_TOKENS = 4096
@@ -46,6 +52,20 @@ _CHINESE_COMPARISON_LABELS = {
     "comparison": "比较：",
     "limitation": "局限：",
 }
+
+
+@lru_cache(maxsize=32)
+def _cached_image_data_uri(image_path: str) -> str:
+    """Encode an immutable rendered page once across generation and checks."""
+    from PIL import Image
+
+    with Image.open(image_path) as source:
+        image = source.convert("RGB")
+        image.thumbnail((1600, 1600))
+        buffer = BytesIO()
+        image.save(buffer, format="JPEG", quality=88, optimize=True)
+    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    return f"data:image/jpeg;base64,{encoded}"
 
 
 class TokenEmitter(Protocol):
@@ -105,11 +125,14 @@ def _evidence_blocks(evidence: list[dict]) -> str:
         source_id = item.get("source_id", "")
         version = item.get("version", "")
         section = item.get("section_number", "")
+        modality = item.get("modality", "text")
+        page_number = item.get("page_number", "")
         text = item.get("text", "")
         blocks.append(
             f"[{number}] parent_id={parent_id}\n"
             f"source_id={source_id}\nversion={version}\n"
-            f"section_number={section}\n{text}"
+            f"section_number={section}\nmodality={modality}\n"
+            f"page_number={page_number}\n{text}"
         )
     return "\n\n".join(blocks)
 
@@ -145,6 +168,8 @@ class OpenAICompatibleAgentLLM:
         base_url: str | None = None,
         client: Any | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
+        vision_model: str | None = None,
+        vision_image_root: Path = VISUAL_PAGES_ROOT,
     ) -> None:
         if not api_key.strip():
             raise ValueError("LLM_API_KEY must not be blank")
@@ -162,6 +187,8 @@ class OpenAICompatibleAgentLLM:
             )
         self.client = client
         self.model = model
+        self.vision_model = vision_model.strip() if vision_model else model
+        self.vision_image_root = vision_image_root.resolve()
         self.max_tokens = max_tokens
 
     @contextmanager
@@ -201,21 +228,23 @@ class OpenAICompatibleAgentLLM:
         self,
         *,
         system: str,
-        user: str,
+        user: str | list[dict[str, Any]],
         max_tokens: int | None = None,
         stream_output: bool = False,
+        model: str | None = None,
     ) -> str:
         messages = [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ]
         selected_max_tokens = max_tokens or self.max_tokens
+        selected_model = model or self.model
 
         emitter = _TOKEN_EMITTER.get() if stream_output else None
         if emitter is not None:
             emitter.start()
             response = self.client.chat.completions.create(
-                model=self.model,
+                model=selected_model,
                 messages=messages,
                 temperature=0,
                 max_tokens=selected_max_tokens,
@@ -235,7 +264,7 @@ class OpenAICompatibleAgentLLM:
 
         def complete(token_limit: int):
             return self.client.chat.completions.create(
-                model=self.model,
+                model=selected_model,
                 messages=messages,
                 temperature=0,
                 max_tokens=token_limit,
@@ -256,6 +285,78 @@ class OpenAICompatibleAgentLLM:
             raise ValueError("model returned empty text")
         return content.strip()
 
+    def _image_data_uri(self, image_path: str) -> str:
+        """Load only generated visual assets and compress them for the API."""
+        path = Path(image_path).resolve()
+        try:
+            path.relative_to(self.vision_image_root)
+        except ValueError as exc:
+            raise ValueError(
+                "visual evidence image is outside the governed page root"
+            ) from exc
+        if not path.is_file():
+            raise FileNotFoundError(f"visual evidence image not found: {path}")
+        return _cached_image_data_uri(str(path))
+
+    @staticmethod
+    def _evidence_images(
+        evidence: list[dict] | dict,
+    ) -> list[tuple[str, str]]:
+        items = evidence if isinstance(evidence, list) else [evidence]
+        images: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for item in items:
+            nested = item.get("visual_evidence")
+            candidates = nested if isinstance(nested, list) else [item]
+            for candidate in candidates:
+                if not isinstance(candidate, Mapping):
+                    continue
+                image_path = candidate.get("image_path")
+                if (
+                    not isinstance(image_path, str)
+                    or not image_path
+                    or image_path in seen
+                ):
+                    continue
+                seen.add(image_path)
+                label = str(
+                    candidate.get(
+                        "parent_id",
+                        item.get("parent_id", "visual evidence"),
+                    )
+                )
+                images.append((label, image_path))
+        return images
+
+    def _vision_content(
+        self,
+        prompt: str,
+        evidence: list[dict] | dict,
+    ) -> str | list[dict[str, Any]]:
+        images = self._evidence_images(evidence)
+        if not images:
+            return prompt
+        content: list[dict[str, Any]] = [
+            {"type": "text", "text": prompt}
+        ]
+        for label, image_path in images:
+            content.append(
+                {
+                    "type": "text",
+                    "text": f"Rendered visual evidence: {label}",
+                }
+            )
+            content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": self._image_data_uri(image_path),
+                        "detail": "high",
+                    },
+                }
+            )
+        return content
+
     def answer_regulation(
         self,
         query: str,
@@ -263,31 +364,36 @@ class OpenAICompatibleAgentLLM:
         skill_text: str = "",
     ) -> str:
         """Answer a regulation question from numbered retrieved evidence."""
+        prompt = (
+            "Answer the question using only the numbered evidence below. "
+            "Visual evidence is a rendered source page and must be read from "
+            "the attached image; its OCR text is only a navigation aid. "
+            "Every factual sentence must end with one or more matching "
+            "citations such as [1] or [1][2]. If the evidence is "
+            "insufficient, say so without adding outside knowledge. Keep "
+            "one independently supported factual claim per sentence. Cite "
+            "the smallest relevant evidence set and only evidence that "
+            "directly supports the entire sentence; do not attach every "
+            "retrieved citation to every sentence. Do "
+            "not combine different evidence topics into one sentence. Do "
+            "not discuss unrelated retrieved clauses merely to use every "
+            "evidence item. Return the direct answer without a literal "
+            "Direct answer heading. Omit version and limitation sections "
+            "unless they materially affect the requested answer and are "
+            "directly supported. Never claim that there is no version "
+            "conflict, that retrieved clauses are identical, or that no "
+            "additional requirement exists merely because retrieval did "
+            "not show one. Do not summarize citation validity.\n\n"
+            f"<numbered_evidence>\n{_evidence_blocks(evidence)}\n"
+            "</numbered_evidence>\n\n"
+            f"<question>\n{query}\n</question>"
+        )
+        user_content = self._vision_content(prompt, evidence)
         return self._chat(
             system=self._system(skill_text, request_text=query),
-            user=(
-                "Answer the question using only the numbered evidence below. "
-                "Every factual sentence must end with one or more matching "
-                "citations such as [1] or [1][2]. If the evidence is "
-                "insufficient, say so without adding outside knowledge. Keep "
-                "one independently supported factual claim per sentence. Cite "
-                "the smallest relevant evidence set and only evidence that "
-                "directly supports the entire sentence; do not attach every "
-                "retrieved citation to every sentence. Do "
-                "not combine different evidence topics into one sentence. Do "
-                "not discuss unrelated retrieved clauses merely to use every "
-                "evidence item. Return the direct answer without a literal "
-                "Direct answer heading. Omit version and limitation sections "
-                "unless they materially affect the requested answer and are "
-                "directly supported. Never claim that there is no version "
-                "conflict, that retrieved clauses are identical, or that no "
-                "additional requirement exists merely because retrieval did "
-                "not show one. Do not summarize citation validity.\n\n"
-                f"<numbered_evidence>\n{_evidence_blocks(evidence)}\n"
-                "</numbered_evidence>\n\n"
-                f"<question>\n{query}\n</question>"
-            ),
+            user=user_content,
             stream_output=True,
+            model=self.vision_model if isinstance(user_content, list) else None,
         )
 
     def repair_regulation_answer(
@@ -299,30 +405,35 @@ class OpenAICompatibleAgentLLM:
         skill_text: str = "",
     ) -> str:
         """Repair citation failures without changing the retrieved evidence."""
+        prompt = (
+            "Repair the previous regulation answer using only the same "
+            "numbered evidence. Read attached rendered pages when an evidence "
+            "item has modality=image; OCR text is only a navigation aid. "
+            "Return only the complete corrected answer. "
+            "Delete unsupported meta conclusions, source summaries, version "
+            "assurances, absence claims, and clause comparisons. Delete a "
+            "failed sentence when the evidence cannot support a narrower "
+            "replacement. Every remaining factual sentence must contain the "
+            "smallest set of citations that directly supports the entire "
+            "sentence. Do not attach every citation to every sentence. Do "
+            "not output a Direct answer, Version note, or Limitation heading "
+            "unless the section is genuinely necessary; headings never cure "
+            "an unsupported sentence. Preserve the user's requested language, "
+            "source, and version.\n\n"
+            f"<question>\n{query}\n</question>\n\n"
+            f"<previous_answer>\n{answer}\n</previous_answer>\n\n"
+            "<validation_failures>"
+            f"{json.dumps(failures, ensure_ascii=False)}"
+            "</validation_failures>\n\n"
+            f"<numbered_evidence>\n{_evidence_blocks(evidence)}\n"
+            "</numbered_evidence>"
+        )
+        user_content = self._vision_content(prompt, evidence)
         return self._chat(
             system=self._system(skill_text, request_text=query),
-            user=(
-                "Repair the previous regulation answer using only the same "
-                "numbered evidence. Return only the complete corrected answer. "
-                "Delete unsupported meta conclusions, source summaries, version "
-                "assurances, absence claims, and clause comparisons. Delete a "
-                "failed sentence when the evidence cannot support a narrower "
-                "replacement. Every remaining factual sentence must contain the "
-                "smallest set of citations that directly supports the entire "
-                "sentence. Do not attach every citation to every sentence. Do "
-                "not output a Direct answer, Version note, or Limitation heading "
-                "unless the section is genuinely necessary; headings never cure "
-                "an unsupported sentence. Preserve the user's requested language, "
-                "source, and version.\n\n"
-                f"<question>\n{query}\n</question>\n\n"
-                f"<previous_answer>\n{answer}\n</previous_answer>\n\n"
-                "<validation_failures>"
-                f"{json.dumps(failures, ensure_ascii=False)}"
-                "</validation_failures>\n\n"
-                f"<numbered_evidence>\n{_evidence_blocks(evidence)}\n"
-                "</numbered_evidence>"
-            ),
+            user=user_content,
             stream_output=True,
+            model=self.vision_model if isinstance(user_content, list) else None,
         )
 
     def plan_comparison(
@@ -552,19 +663,24 @@ class OpenAICompatibleAgentLLM:
                 "when any material part is unsupported or when citations are "
                 "merely padded with irrelevant clauses."
             )
+        prompt = (
+            "Does the evidence directly support the claim without making it "
+            "materially broader? For rendered page evidence, inspect the "
+            "attached image rather than trusting OCR text alone. Return "
+            "{\"supported\":true} or "
+            f"{{\"supported\":false}}.{joint_instruction}\n\n"
+            f"<claim>{claim}</claim>\n"
+            f"<evidence>{json.dumps(evidence, ensure_ascii=False)}</evidence>"
+        )
+        user_content = self._vision_content(prompt, evidence)
         content = self._chat(
             system=(
                 "You are a strict citation verifier. Return JSON only. Do not "
                 "use outside knowledge."
             ),
-            user=(
-                "Does the evidence directly support the claim without making it "
-                "materially broader? Return {\"supported\":true} or "
-                f"{{\"supported\":false}}.{joint_instruction}\n\n"
-                f"<claim>{claim}</claim>\n"
-                f"<evidence>{json.dumps(evidence, ensure_ascii=False)}</evidence>"
-            ),
+            user=user_content,
             max_tokens=600,
+            model=self.vision_model if isinstance(user_content, list) else None,
         )
         payload = _require_object(_json_value(content), label="entailment result")
         supported = payload.get("supported")

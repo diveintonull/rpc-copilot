@@ -220,17 +220,23 @@ def execute_regulation_qa(state: AgentState, tools, llm) -> dict:
             ],
         }
 
-    evidence = tools.search_regulation(query, None)
+    multimodal_search = getattr(tools, "search_regulation_multimodal", None)
+    if callable(multimodal_search):
+        evidence = multimodal_search(query, None)
+        search_tool_name = "search_regulation_multimodal"
+    else:
+        evidence = tools.search_regulation(query, None)
+        search_tool_name = "search_regulation"
 
     tool_call = {
-        "tool": "search_regulation",
+        "tool": search_tool_name,
         "query": query,
         "source_ids": None,
         "result_count": len(evidence),
     }
     new_trace = {
         "node": "execute_regulation_qa",
-        "tool": "search_regulation",
+        "tool": search_tool_name,
         "result_count": len(evidence),
     }
 

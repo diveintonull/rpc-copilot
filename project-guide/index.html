@@ -1,0 +1,1747 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="GRC Copilot 从代码实现、工程设计到测试与调优的完整中文教程">
+  <title>GRC Copilot 项目全解</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f7f5;
+      --paper: #ffffff;
+      --paper-2: #f8faf9;
+      --ink: #17211d;
+      --muted: #60716a;
+      --line: #d8e2dd;
+      --green: #0b6b55;
+      --green-2: #0f8a6b;
+      --green-soft: #e7f4ef;
+      --amber: #a85f00;
+      --amber-soft: #fff4df;
+      --red: #a13a3a;
+      --red-soft: #fff0ee;
+      --blue: #315d9b;
+      --blue-soft: #edf3ff;
+      --shadow: 0 16px 50px rgba(25, 54, 43, 0.08);
+      --radius: 18px;
+      --sidebar: 292px;
+      --content: 980px;
+      --mono: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+      --sans: Inter, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      --serif: "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", serif;
+    }
+
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #0e1512;
+      --paper: #151f1b;
+      --paper-2: #101915;
+      --ink: #e9f1ed;
+      --muted: #a1b2aa;
+      --line: #2c3c35;
+      --green: #5dd1aa;
+      --green-2: #77dfbc;
+      --green-soft: #18382e;
+      --amber: #ffc36f;
+      --amber-soft: #3b2c18;
+      --red: #ff9e96;
+      --red-soft: #3b2423;
+      --blue: #9fc0ff;
+      --blue-soft: #202f4b;
+      --shadow: 0 16px 50px rgba(0, 0, 0, 0.24);
+    }
+
+    * { box-sizing: border-box; }
+    html {
+      max-width: 100%;
+      overflow-x: hidden;
+      scroll-behavior: smooth;
+      scroll-padding-top: 26px;
+    }
+    body {
+      margin: 0;
+      max-width: 100%;
+      overflow-x: hidden;
+      background:
+        radial-gradient(circle at 80% 0%, rgba(15, 138, 107, 0.11), transparent 32rem),
+        var(--bg);
+      color: var(--ink);
+      font-family: var(--sans);
+      line-height: 1.78;
+    }
+    a { color: var(--green); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+    button, input { font: inherit; }
+    button { color: inherit; }
+    code, pre { font-family: var(--mono); }
+    code {
+      padding: 0.14rem 0.4rem;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--paper-2);
+      color: var(--green);
+      font-size: 0.9em;
+    }
+    pre {
+      margin: 0;
+      padding: 1rem 1.1rem;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #10221b;
+      color: #d9f5e9;
+      font-size: 0.84rem;
+      line-height: 1.7;
+      tab-size: 2;
+    }
+    pre code { padding: 0; border: 0; background: transparent; color: inherit; }
+    h1, h2, h3, h4 {
+      overflow-wrap: anywhere;
+      line-height: 1.24;
+    }
+    h1, h2 { font-family: var(--serif); }
+    p { margin: 0.7rem 0; }
+    ul, ol { padding-left: 1.35rem; }
+    li + li { margin-top: 0.38rem; }
+    strong { font-weight: 700; }
+
+    .progress {
+      position: fixed;
+      inset: 0 0 auto;
+      z-index: 100;
+      height: 4px;
+      background: transparent;
+    }
+    .progress > span {
+      display: block;
+      width: 0;
+      height: 100%;
+      background: linear-gradient(90deg, var(--green), #56c99f);
+      transition: width 80ms linear;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: var(--sidebar) minmax(0, 1fr);
+      min-height: 100vh;
+    }
+    .sidebar {
+      position: fixed;
+      inset: 0 auto 0 0;
+      z-index: 30;
+      width: var(--sidebar);
+      overflow-y: auto;
+      border-right: 1px solid var(--line);
+      background: color-mix(in srgb, var(--paper) 92%, transparent);
+      backdrop-filter: blur(14px);
+    }
+    .sidebar-inner { padding: 1.5rem 1.1rem 2rem; }
+    .brand {
+      display: grid;
+      grid-template-columns: 44px 1fr;
+      gap: 0.8rem;
+      align-items: center;
+      margin-bottom: 1.2rem;
+      padding: 0 0.4rem;
+    }
+    .brand-mark {
+      display: grid;
+      place-items: center;
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      background: var(--green);
+      color: #fff;
+      font-weight: 800;
+      letter-spacing: -0.05em;
+      box-shadow: 0 8px 20px rgba(11, 107, 85, 0.2);
+    }
+    .brand strong { display: block; line-height: 1.2; }
+    .brand small { display: block; color: var(--muted); font-size: 0.74rem; }
+    .nav-title {
+      margin: 1rem 0 0.45rem;
+      padding: 0 0.55rem;
+      color: var(--muted);
+      font-size: 0.7rem;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    .nav {
+      display: grid;
+      gap: 0.16rem;
+    }
+    .nav a {
+      display: grid;
+      grid-template-columns: 1.7rem 1fr;
+      gap: 0.35rem;
+      align-items: start;
+      padding: 0.48rem 0.58rem;
+      border-radius: 9px;
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 0.84rem;
+      line-height: 1.4;
+    }
+    .nav a span:first-child {
+      color: color-mix(in srgb, var(--muted) 72%, transparent);
+      font-family: var(--mono);
+      font-size: 0.72rem;
+    }
+    .nav a:hover { background: var(--paper-2); color: var(--ink); }
+    .nav a.active {
+      background: var(--green-soft);
+      color: var(--green);
+      font-weight: 700;
+    }
+    .sidebar-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.55rem;
+      margin-top: 1rem;
+      padding: 1rem 0.35rem 0;
+      border-top: 1px solid var(--line);
+    }
+    .icon-button {
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--paper);
+      cursor: pointer;
+    }
+    .icon-button:hover { border-color: var(--green); color: var(--green); }
+
+    .main {
+      grid-column: 2;
+      min-width: 0;
+      width: min(100%, calc(var(--content) + 6rem));
+      margin: 0 auto;
+      padding: 2.5rem 3rem 8rem;
+    }
+    .mobile-bar { display: none; }
+    .hero {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      margin-bottom: 1.4rem;
+      padding: clamp(2rem, 6vw, 5rem);
+      border: 1px solid var(--line);
+      border-radius: 26px;
+      background:
+        linear-gradient(135deg, color-mix(in srgb, var(--green-soft) 84%, var(--paper)), var(--paper) 60%);
+      box-shadow: var(--shadow);
+    }
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: -7rem;
+      bottom: -9rem;
+      width: 25rem;
+      height: 25rem;
+      border: 1px solid color-mix(in srgb, var(--green) 20%, transparent);
+      border-radius: 50%;
+      box-shadow:
+        0 0 0 3rem color-mix(in srgb, var(--green) 4%, transparent),
+        0 0 0 7rem color-mix(in srgb, var(--green) 3%, transparent);
+      pointer-events: none;
+    }
+    .eyebrow {
+      margin: 0 0 0.7rem;
+      color: var(--green);
+      font-size: 0.75rem;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+    }
+    .hero h1 {
+      max-width: 780px;
+      margin: 0;
+      font-size: clamp(2.2rem, 6vw, 4.65rem);
+      letter-spacing: -0.045em;
+    }
+    .hero .lede {
+      max-width: 760px;
+      margin-top: 1.2rem;
+      color: var(--muted);
+      font-size: clamp(1rem, 2vw, 1.2rem);
+    }
+    .hero-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.55rem;
+      margin-top: 1.5rem;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.36rem 0.7rem;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--paper) 82%, transparent);
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-weight: 650;
+    }
+
+    .section {
+      min-width: 0;
+      margin-top: 1.4rem;
+      padding: clamp(1.5rem, 4vw, 3rem);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--paper);
+      box-shadow: var(--shadow);
+    }
+    .section-header {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 1rem;
+      align-items: start;
+      margin-bottom: 1.5rem;
+    }
+    .section-number {
+      display: grid;
+      place-items: center;
+      width: 42px;
+      height: 42px;
+      border-radius: 12px;
+      background: var(--green-soft);
+      color: var(--green);
+      font-family: var(--mono);
+      font-weight: 800;
+    }
+    .section h2 { margin: 0; font-size: clamp(1.55rem, 3vw, 2.2rem); }
+    .section-subtitle { margin: 0.35rem 0 0; color: var(--muted); }
+    .section h3 { margin: 2rem 0 0.7rem; font-size: 1.2rem; }
+    .section h4 { margin: 1.2rem 0 0.4rem; font-size: 1rem; }
+
+    .callout {
+      margin: 1rem 0;
+      padding: 1rem 1.1rem;
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--green);
+      border-radius: 12px;
+      background: var(--green-soft);
+    }
+    .callout.warning { border-left-color: var(--amber); background: var(--amber-soft); }
+    .callout.danger { border-left-color: var(--red); background: var(--red-soft); }
+    .callout.info { border-left-color: var(--blue); background: var(--blue-soft); }
+    .callout > strong:first-child { display: block; margin-bottom: 0.25rem; }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0.8rem;
+      margin: 1rem 0;
+    }
+    .card {
+      padding: 1.05rem;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: var(--paper-2);
+    }
+    .card .kicker {
+      color: var(--green);
+      font-size: 0.7rem;
+      font-weight: 800;
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+    }
+    .card h3, .card h4 { margin: 0.35rem 0; }
+    .card p { color: var(--muted); font-size: 0.9rem; }
+
+    .pipeline {
+      display: flex;
+      max-width: 100%;
+      align-items: stretch;
+      gap: 0.45rem;
+      overflow-x: auto;
+      margin: 1.2rem 0;
+      padding: 0.5rem 0 0.8rem;
+    }
+    .pipe-node {
+      position: relative;
+      flex: 1 0 118px;
+      min-width: 118px;
+      padding: 0.8rem;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--paper-2);
+      text-align: center;
+      font-size: 0.8rem;
+    }
+    .pipe-node strong { display: block; color: var(--green); font-size: 0.86rem; }
+    .pipe-node + .pipe-node::before {
+      content: "→";
+      position: absolute;
+      left: -0.52rem;
+      top: 50%;
+      z-index: 2;
+      transform: translate(-50%, -50%);
+      color: var(--green);
+      font-weight: 900;
+    }
+    .split-view {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      margin: 1rem 0;
+    }
+    .box {
+      padding: 1rem;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--paper-2);
+    }
+    .box h3, .box h4 { margin-top: 0; }
+
+    .file-tree {
+      display: grid;
+      gap: 0.4rem;
+      margin: 1rem 0;
+    }
+    .file-row {
+      display: grid;
+      grid-template-columns: 9rem 1fr;
+      gap: 0.8rem;
+      padding: 0.7rem 0.85rem;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--paper-2);
+    }
+    .file-row a {
+      font-family: var(--mono);
+      font-size: 0.86rem;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .file-row span { color: var(--muted); font-size: 0.9rem; }
+
+    .step-list {
+      list-style: none;
+      margin: 1rem 0;
+      padding: 0;
+      counter-reset: steps;
+    }
+    .step-list > li {
+      position: relative;
+      margin: 0;
+      padding: 0 0 1.35rem 3rem;
+      counter-increment: steps;
+    }
+    .step-list > li::before {
+      content: counter(steps);
+      position: absolute;
+      left: 0;
+      top: 0.1rem;
+      display: grid;
+      place-items: center;
+      width: 2rem;
+      height: 2rem;
+      border-radius: 50%;
+      background: var(--green);
+      color: #fff;
+      font-family: var(--mono);
+      font-weight: 800;
+    }
+    .step-list > li::after {
+      content: "";
+      position: absolute;
+      left: 0.98rem;
+      top: 2.2rem;
+      bottom: 0.15rem;
+      width: 1px;
+      background: var(--line);
+    }
+    .step-list > li:last-child::after { display: none; }
+    .step-list h3, .step-list h4 { margin: 0 0 0.25rem; }
+    .step-list p { color: var(--muted); }
+
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 0.7rem;
+      margin: 1rem 0;
+    }
+    .metric {
+      padding: 1rem;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--paper-2);
+    }
+    .metric strong {
+      display: block;
+      color: var(--green);
+      font-family: var(--serif);
+      font-size: 1.65rem;
+      line-height: 1.2;
+    }
+    .metric span { color: var(--muted); font-size: 0.78rem; }
+
+    .table-wrap { overflow-x: auto; margin: 1rem 0; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.86rem;
+    }
+    th, td {
+      padding: 0.68rem 0.75rem;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+      white-space: nowrap;
+    }
+    th {
+      background: var(--paper-2);
+      color: var(--muted);
+      font-size: 0.76rem;
+      letter-spacing: 0.04em;
+    }
+    tr.selected td { background: var(--green-soft); color: var(--green); font-weight: 700; }
+
+    details {
+      margin: 0.8rem 0;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--paper-2);
+    }
+    summary {
+      padding: 0.85rem 1rem;
+      cursor: pointer;
+      color: var(--ink);
+      font-weight: 700;
+    }
+    details > div { padding: 0 1rem 1rem; }
+    .code-wrap { position: relative; }
+    .copy-button {
+      position: absolute;
+      top: 0.55rem;
+      right: 0.55rem;
+      z-index: 2;
+      padding: 0.25rem 0.55rem;
+      border: 1px solid #49665b;
+      border-radius: 7px;
+      background: #183128;
+      color: #cde8dd;
+      cursor: pointer;
+      font-size: 0.72rem;
+    }
+
+    .quiz {
+      margin-top: 1rem;
+      padding: 1rem;
+      border: 1px dashed var(--green);
+      border-radius: 12px;
+      background: color-mix(in srgb, var(--green-soft) 55%, transparent);
+    }
+    .quiz summary { padding: 0; color: var(--green); }
+    .quiz > div { padding: 0.7rem 0 0; }
+
+    .glossary {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.7rem;
+    }
+    .glossary div {
+      padding: 0.8rem;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--paper-2);
+    }
+    .glossary dt { color: var(--green); font-family: var(--mono); font-weight: 800; }
+    .glossary dd { margin: 0.25rem 0 0; color: var(--muted); font-size: 0.88rem; }
+
+    .footer {
+      padding: 3rem 1rem 0;
+      color: var(--muted);
+      text-align: center;
+      font-size: 0.84rem;
+    }
+    .back-top {
+      position: fixed;
+      right: 1.25rem;
+      bottom: 1.25rem;
+      z-index: 20;
+      width: 44px;
+      height: 44px;
+      border: 1px solid var(--line);
+      border-radius: 50%;
+      background: var(--paper);
+      box-shadow: var(--shadow);
+      cursor: pointer;
+      opacity: 0;
+      transform: translateY(10px);
+      pointer-events: none;
+      transition: 160ms ease;
+    }
+    .back-top.visible { opacity: 1; transform: none; pointer-events: auto; }
+
+    @media (max-width: 1100px) {
+      :root { --sidebar: 250px; }
+      .main { padding-inline: 2rem; }
+      .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 820px) {
+      html { scroll-padding-top: 72px; }
+      .layout { display: block; }
+      .sidebar {
+        inset: 0 auto 0 0;
+        width: min(86vw, 320px);
+        transform: translateX(-102%);
+        transition: transform 180ms ease;
+        box-shadow: var(--shadow);
+      }
+      body.nav-open .sidebar { transform: none; }
+      .main { width: 100%; padding: 5rem 1rem 5rem; }
+      .mobile-bar {
+        position: fixed;
+        inset: 0 0 auto;
+        z-index: 25;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 58px;
+        padding: 0 1rem;
+        border-bottom: 1px solid var(--line);
+        background: color-mix(in srgb, var(--paper) 92%, transparent);
+        backdrop-filter: blur(14px);
+      }
+      .mobile-bar button {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--paper);
+        cursor: pointer;
+      }
+      .split-view, .glossary { grid-template-columns: 1fr; }
+      .file-row { grid-template-columns: 1fr; gap: 0.2rem; }
+    }
+    @media (max-width: 560px) {
+      .hero { padding: 1.5rem; border-radius: 18px; }
+      .section { padding: 1.25rem; }
+      .section-header { grid-template-columns: 1fr; }
+      .section-number { width: 36px; height: 36px; }
+      .cards, .metric-grid { grid-template-columns: 1fr; }
+      .hero-meta {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .pill {
+        min-width: 0;
+        justify-content: center;
+        text-align: center;
+      }
+    }
+    @media print {
+      .sidebar, .mobile-bar, .progress, .back-top, .copy-button { display: none !important; }
+      .layout { display: block; }
+      .main { width: 100%; padding: 0; }
+      .hero, .section { box-shadow: none; break-inside: avoid; }
+      details > div { display: block; }
+    }
+  </style>
+</head>
+<body>
+  <div class="progress" aria-hidden="true"><span id="progress-bar"></span></div>
+
+  <div class="mobile-bar">
+    <button id="menu-button" type="button" aria-label="打开导航">☰</button>
+    <strong>GRC Copilot 项目全解</strong>
+    <button id="mobile-theme" type="button" aria-label="切换主题">◐</button>
+  </div>
+
+  <div class="layout">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-inner">
+        <div class="brand">
+          <div class="brand-mark">GC</div>
+          <div>
+            <strong>GRC Copilot</strong>
+            <small>从代码到工程实践</small>
+          </div>
+        </div>
+
+        <div class="nav-title">阅读导航</div>
+        <nav class="nav" id="nav">
+          <a href="#overview"><span>01</span><span>先看懂它是什么</span></a>
+          <a href="#request"><span>02</span><span>一条请求完整旅程</span></a>
+          <a href="#repository"><span>03</span><span>目录与代码地图</span></a>
+          <a href="#ingestion"><span>04</span><span>语料解析与切分</span></a>
+          <a href="#retrieval"><span>05</span><span>检索与 Rerank</span></a>
+          <a href="#agent"><span>06</span><span>LangGraph Agent</span></a>
+          <a href="#skills"><span>07</span><span>渐进式 Skills</span></a>
+          <a href="#tools"><span>08</span><span>Tools 与 MCP</span></a>
+          <a href="#validation"><span>09</span><span>生成、引用与安全</span></a>
+          <a href="#api"><span>10</span><span>API、流式与前端</span></a>
+          <a href="#testing"><span>11</span><span>测试到底怎么测</span></a>
+          <a href="#evaluation"><span>12</span><span>评测指标怎么读</span></a>
+          <a href="#tuning"><span>13</span><span>消融与调优</span></a>
+          <a href="#limitations"><span>14</span><span>真实缺陷与边界</span></a>
+          <a href="#practice"><span>15</span><span>动手学习路线</span></a>
+          <a href="#interview"><span>16</span><span>面试复述框架</span></a>
+          <a href="#glossary"><span>17</span><span>术语速查</span></a>
+        </nav>
+
+        <div class="sidebar-actions">
+          <button class="icon-button" id="theme-button" type="button">切换主题</button>
+          <button class="icon-button" id="print-button" type="button">打印 / PDF</button>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="hero" id="top">
+        <p class="eyebrow">ENGINEERING WALKTHROUGH · 2026-07-17</p>
+        <h1>从一条法规到一个可验证回答</h1>
+        <p class="lede">
+          这不是 API 清单，而是一份从工程视角拆解 GRC Copilot 的教程。
+          你已经懂 Python、HTTP、数据库和 RAG；这里重点解释本项目的代码怎样连接、
+          为什么这样切分、测试在证明什么，以及调优数字是怎么来的。
+        </p>
+        <div class="hero-meta">
+          <span class="pill">单文件离线页面</span>
+          <span class="pill">17 个章节</span>
+          <span class="pill">真实代码路径</span>
+          <span class="pill">包含缺陷分析</span>
+        </div>
+      </header>
+
+      <section class="section" id="overview">
+        <div class="section-header">
+          <div class="section-number">01</div>
+          <div>
+            <h2>先看懂：这个项目到底是什么</h2>
+            <p class="section-subtitle">先建立正确心智模型，再读代码。</p>
+          </div>
+        </div>
+
+        <div class="callout">
+          <strong>一句话定义</strong>
+          GRC Copilot 是一个“证据优先的合规工作流 Agent”：它从受治理的法规语料中找证据，
+          再完成法规问答、条款比较或控制差距分析，并尽量让每个结论都能回到具体版本和条款。
+        </div>
+
+        <div class="cards">
+          <article class="card">
+            <span class="kicker">Input</span>
+            <h3>用户问题</h3>
+            <p>法规要求是什么、两部法规有什么差异、企业当前控制存在哪些差距。</p>
+          </article>
+          <article class="card">
+            <span class="kicker">Core</span>
+            <h3>受控工作流</h3>
+            <p>系统按任务模式走固定 Graph，不让模型自由决定所有步骤。</p>
+          </article>
+          <article class="card">
+            <span class="kicker">Output</span>
+            <h3>回答 + 证据 + Trace</h3>
+            <p>用户不仅看答案，还能看到原文证据、版本和可观察执行节点。</p>
+          </article>
+        </div>
+
+        <h3>它为什么不是普通聊天机器人</h3>
+        <ul>
+          <li><strong>回答前有检索：</strong>模型不能只靠参数记忆回答法规问题。</li>
+          <li><strong>证据带版本：</strong><code>GBT-22239@2019#7.1.4.1</code> 同时包含来源、版本和条款。</li>
+          <li><strong>工作流有限制：</strong>缺少证据、缺少比较一侧或缺少企业现状时应拒答。</li>
+          <li><strong>回答后有校验：</strong>引用编号、版本一致性和语义支持会被再次检查。</li>
+          <li><strong>失败也是结果：</strong>项目把拒答和失败案例当成评测对象，而不是只展示成功 Demo。</li>
+        </ul>
+
+        <h3>它又为什么不算“自主智能体”</h3>
+        <p>
+          真实 API 根据前端传入的 <code>mode</code> 固定选择工作流；工具调用也主要由 Graph 节点决定。
+          所以它更像受治理的 LLM 工作流，而不是让模型自由规划、动态选择任意工具的通用 Agent。
+          在合规场景中，这种保守设计通常比“更自主”更合理。
+        </p>
+
+        <div class="pipeline" aria-label="系统总览">
+          <div class="pipe-node"><strong>法规文件</strong>PDF / HTML</div>
+          <div class="pipe-node"><strong>解析切分</strong>父章节 + 子块</div>
+          <div class="pipe-node"><strong>向量索引</strong>Qdrant</div>
+          <div class="pipe-node"><strong>检索精排</strong>Dense + Rerank</div>
+          <div class="pipe-node"><strong>Agent Graph</strong>任务工作流</div>
+          <div class="pipe-node"><strong>LLM</strong>生成与判断</div>
+          <div class="pipe-node"><strong>校验</strong>引用 / 版本</div>
+          <div class="pipe-node"><strong>SSE UI</strong>流式展示</div>
+        </div>
+      </section>
+
+      <section class="section" id="request">
+        <div class="section-header">
+          <div class="section-number">02</div>
+          <div>
+            <h2>一条请求从头到尾怎样运行</h2>
+            <p class="section-subtitle">用“三级系统身份鉴别要求”串起所有模块。</p>
+          </div>
+        </div>
+
+        <div class="callout info">
+          <strong>示例请求</strong>
+          用户在“法规问答”模式输入：<em>GB/T 22239—2019 对三级系统的身份鉴别提出了哪些要求？</em>
+        </div>
+
+        <ol class="step-list">
+          <li>
+            <h3>前端发送请求</h3>
+            <p><code>web/app.js</code> 生成 request ID，POST 到 <code>/chat</code>，请求体包含 mode、query 和 control_text。</p>
+          </li>
+          <li>
+            <h3>API 注册任务</h3>
+            <p><code>api/main.py</code> 用 TaskManager 防止同一 request ID 重复执行，并建立 SSE 事件队列。</p>
+          </li>
+          <li>
+            <h3>RealAgentRunner 选择 Graph</h3>
+            <p><code>api/real_runtime.py</code> 根据前端 mode 选择已经编译好的法规问答 Graph，初始化 AgentState。</p>
+          </li>
+          <li>
+            <h3>匹配并加载 Skill</h3>
+            <p>意图映射到 <code>regulation-qa</code>，只读取这一份 SKILL.md 正文，作为领域 SOP 注入模型。</p>
+          </li>
+          <li>
+            <h3>工具检索法规证据</h3>
+            <p><code>search_regulation</code> 把问题编码成向量，在 Qdrant 搜子块，扩展成完整父条款，再用 Reranker 排到前五。</p>
+          </li>
+          <li>
+            <h3>LLM 根据编号证据回答</h3>
+            <p>证据被包装成 [1]、[2]……模型被要求每个事实句都附上最小必要引用。</p>
+          </li>
+          <li>
+            <h3>引用验证与一次修复</h3>
+            <p>系统检查未知引用、版本不一致、无引用声明和不受证据支持的声明；首次失败时可尝试修复一次。</p>
+          </li>
+          <li>
+            <h3>SSE 流式返回</h3>
+            <p>回答 token、证据卡片、Trace 节点和终态分别作为 SSE 事件发送，前端按到达顺序更新三个区域。</p>
+          </li>
+        </ol>
+
+        <div class="callout warning">
+          <strong>重要：两条“流”不要混淆</strong>
+          数据流描述 query、evidence、answer 怎样变化；控制流描述 Graph 下一步走哪个节点。
+          Agent 工程通常就是同时管理这两条流。
+        </div>
+      </section>
+
+      <section class="section" id="repository">
+        <div class="section-header">
+          <div class="section-number">03</div>
+          <div>
+            <h2>目录与代码地图</h2>
+            <p class="section-subtitle">每个目录只回答一个核心问题。</p>
+          </div>
+        </div>
+
+        <div class="file-tree">
+          <div class="file-row"><a href="../ingest/">ingest/</a><span>法规原文怎样变成有版本、有父子关系的可检索数据。</span></div>
+          <div class="file-row"><a href="../rag/">rag/</a><span>问题怎样检索、融合、精排，以及答案引用怎样校验。</span></div>
+          <div class="file-row"><a href="../agent/">agent/</a><span>状态、工具、Skills、LLM 适配器和 LangGraph 节点怎样编排。</span></div>
+          <div class="file-row"><a href="../api/">api/</a><span>怎样把同步 Graph 包装成 FastAPI、SSE 和任务生命周期。</span></div>
+          <div class="file-row"><a href="../mcp_server/">mcp_server/</a><span>怎样把确定性工具暴露成标准 MCP 工具。</span></div>
+          <div class="file-row"><a href="../evals/">evals/</a><span>数据集、指标、消融和最终评测怎样运行。</span></div>
+          <div class="file-row"><a href="../tests/">tests/</a><span>用 fake、依赖注入和契约测试验证每个边界。</span></div>
+          <div class="file-row"><a href="../web/">web/</a><span>不依赖前端框架的 SSE 客户端、Markdown 渲染和可观察 UI。</span></div>
+          <div class="file-row"><a href="../skills/">skills/</a><span>三种任务的工作步骤、证据规则、输出格式和拒答边界。</span></div>
+          <div class="file-row"><a href="../data/parsed/">data/parsed/</a><span>纳入版本控制的五份解析语料和父章节存储。</span></div>
+        </div>
+
+        <h3>推荐的代码阅读顺序</h3>
+        <ol>
+          <li><code>agent/state.py</code>：先认识整个系统传递的数据。</li>
+          <li><code>agent/graph.py</code>：看控制流和所有节点连接。</li>
+          <li><code>agent/nodes.py</code>：看每个工作流实际做什么。</li>
+          <li><code>agent/tools.py</code>：看 Agent 能调用哪些确定性能力。</li>
+          <li><code>rag/retrieve.py</code>：看检索流水线。</li>
+          <li><code>ingest/chunk_parent.py</code> 与 <code>ingest/index.py</code>：倒推证据怎样生产。</li>
+          <li><code>api/real_runtime.py</code> 和 <code>api/main.py</code>：看如何接入服务。</li>
+          <li><code>evals/run_eval.py</code>：最后看系统怎样被测量。</li>
+        </ol>
+      </section>
+
+      <section class="section" id="ingestion">
+        <div class="section-header">
+          <div class="section-number">04</div>
+          <div>
+            <h2>语料解析与父子切分</h2>
+            <p class="section-subtitle">切分不是把字符串随便每 500 字砍一刀。</p>
+          </div>
+        </div>
+
+        <h3>第一步：把不同格式统一成 Markdown</h3>
+        <div class="cards">
+          <article class="card"><span class="kicker">PDF</span><h4>GDPR</h4><p><code>parse.py</code> 使用 pymupdf4llm 处理文本型 PDF。</p></article>
+          <article class="card"><span class="kicker">OCR</span><h4>GB/T 标准</h4><p><code>parse_mineru.py</code> 使用 MinerU，解决中文 PDF 字体映射乱码。</p></article>
+          <article class="card"><span class="kicker">HTML</span><h4>中国法律</h4><p><code>parse_html.py</code> 提取正文容器，再转为 Markdown。</p></article>
+        </div>
+
+        <h3>第二步：建立版本化身份</h3>
+        <p>
+          <code>ingest/schema.py</code> 定义 DocumentMeta。一个文档不是简单叫“网络安全法”，
+          而是用 <code>source_id + version</code> 形成 <code>document_id</code>。
+          再加条款号形成父章节 ID：
+        </p>
+        <div class="code-wrap">
+          <button class="copy-button" type="button">复制</button>
+          <pre><code>cybersecurity-law@2025-amended#第二十三条
+└──── source_id ────┘ └─ version ─┘ └ section ┘
+
+GBT-22239@2019#7.1.4.1</code></pre>
+        </div>
+        <p>这样做的意义是：同一法规的不同版本不能在向量库里悄悄覆盖或混在一起。</p>
+
+        <h3>第三步：先切父章节，再切子块</h3>
+        <div class="split-view">
+          <div class="box">
+            <h4>父章节 Parent</h4>
+            <p>一个完整、可引用的法规条款。例如 7.1.4.1 的全部正文。</p>
+            <ul>
+              <li>不直接做向量搜索</li>
+              <li>保存在 <code>_parents_store.json</code></li>
+              <li>最终作为完整上下文返回</li>
+            </ul>
+          </div>
+          <div class="box">
+            <h4>子块 Child</h4>
+            <p>父章节内部的短窗口，默认 500 字、重叠 100 字。</p>
+            <ul>
+              <li>生成 embedding</li>
+              <li>写入 Qdrant</li>
+              <li>携带 parent_id 指针</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="pipeline">
+          <div class="pipe-node"><strong>完整条款</strong>900 字</div>
+          <div class="pipe-node"><strong>Child 0</strong>0–500</div>
+          <div class="pipe-node"><strong>Child 1</strong>400–900</div>
+          <div class="pipe-node"><strong>搜索命中</strong>Child 1</div>
+          <div class="pipe-node"><strong>向上扩展</strong>完整 Parent</div>
+        </div>
+
+        <h3>为什么搜索小块，却返回大块</h3>
+        <ul>
+          <li><strong>小块更容易匹配：</strong>主题集中，不会被一整章无关文字稀释 embedding。</li>
+          <li><strong>大块更适合回答：</strong>返回完整条款，避免缺少前提、例外和上下文。</li>
+          <li><strong>引用更稳定：</strong>Gold 和答案都引用父章节，而不是不稳定的向量点编号。</li>
+        </ul>
+
+        <details class="quiz">
+          <summary>自测：为什么不直接把父章节也放进 Qdrant？</summary>
+          <div>
+            可以，但长章节的向量会混合多个语义，召回通常不如短子块；同时如果最终只返回子块，又容易截断要求。
+            当前方案用 child 解决“找得准”，用 parent 解决“读得全”。
+          </div>
+        </details>
+      </section>
+
+      <section class="section" id="retrieval">
+        <div class="section-header">
+          <div class="section-number">05</div>
+          <div>
+            <h2>检索、融合与 Rerank</h2>
+            <p class="section-subtitle">召回负责“别漏掉”，精排负责“把正确的放前面”。</p>
+          </div>
+        </div>
+
+        <h3>项目实现过的四个部件</h3>
+        <div class="cards">
+          <article class="card"><span class="kicker">Dense</span><h4>BGE-M3 向量检索</h4><p>适合语义近似，例如口语问题与法规正式表述不完全相同。</p></article>
+          <article class="card"><span class="kicker">Sparse</span><h4>Jieba + BM25</h4><p>适合精确词、条款号和关键词，但目录文本也可能得到高分。</p></article>
+          <article class="card"><span class="kicker">Fusion</span><h4>RRF</h4><p>根据名次而不是原始分数合并 Dense 与 Sparse 排名。</p></article>
+          <article class="card"><span class="kicker">Rerank</span><h4>CrossEncoder</h4><p>同时阅读 query 和候选正文，成本更高，但排序判断更细。</p></article>
+        </div>
+
+        <h3>真实默认路径</h3>
+        <p>
+          Agent 的默认工具不是“所有高级功能全开”，而是根据消融实验选择：
+          <strong>父子分块 + Dense + Parent Expansion + Rerank</strong>，Sparse 默认关闭。
+        </p>
+        <div class="pipeline">
+          <div class="pipe-node"><strong>Query</strong>用户问题</div>
+          <div class="pipe-node"><strong>Embedding</strong>BGE-M3</div>
+          <div class="pipe-node"><strong>Dense Top 20</strong>子块候选</div>
+          <div class="pipe-node"><strong>Parent Expand</strong>去重父条款</div>
+          <div class="pipe-node"><strong>Rerank Top 5</strong>完整条款</div>
+          <div class="pipe-node"><strong>Evidence</strong>交给 Agent</div>
+        </div>
+
+        <h3>为什么 Sparse 做了却默认关闭</h3>
+        <p>
+          因为工程选择应该由整体数据决定，而不是由“听起来先进”决定。
+          在父子切分下，加入 Sparse 后 Recall@5 从 81.91% 降到 80.85%，MRR 也下降。
+          这说明当前语料和 tokenizer 组合下，BM25 带来的候选并没有改善整体结果。
+        </p>
+
+        <details>
+          <summary>核心代码定位</summary>
+          <div>
+            <ul>
+              <li><code>rag/dense.py::search_dense</code>：查询向量与 Qdrant filter。</li>
+              <li><code>rag/sparse.py::SparseIndex</code>：中文分词和内存 BM25。</li>
+              <li><code>rag/fusion.py::reciprocal_rank_fusion</code>：稳定 RRF 排名。</li>
+              <li><code>rag/rerank.py::rerank_hits</code>：CrossEncoder 与失败回退。</li>
+              <li><code>rag/retrieve.py::retrieve</code>：统一流水线入口。</li>
+              <li><code>agent/tools.py::_default_search</code>：Agent 实际选择的配置。</li>
+            </ul>
+          </div>
+        </details>
+      </section>
+
+      <section class="section" id="agent">
+        <div class="section-header">
+          <div class="section-number">06</div>
+          <div>
+            <h2>LangGraph Agent 怎样工作</h2>
+            <p class="section-subtitle">Graph 的价值是显式管理状态、分支、重试和终态。</p>
+          </div>
+        </div>
+
+        <h3>AgentState：所有节点共享的数据合同</h3>
+        <div class="code-wrap">
+          <button class="copy-button" type="button">复制</button>
+          <pre><code>request_id        请求身份
+query             当前检索问题，重试时可能被重写
+control_text      企业当前控制事实
+intent            regulation_qa / clause_comparison / gap_analysis / unsupported
+active_skill      当前选择的 Skill
+skill_text        已加载的 SOP 正文
+tool_calls        可审计的工具调用记录
+evidence          法规证据或 gap rows
+answer            当前答案
+citations_valid   校验结果
+retry_count       已重试次数
+final_status      completed / refused / cancelled / failed
+trace             节点事件列表</code></pre>
+        </div>
+
+        <h3>Graph 控制流</h3>
+        <div class="pipeline">
+          <div class="pipe-node"><strong>route_intent</strong>取得模式</div>
+          <div class="pipe-node"><strong>match_skill</strong>匹配元数据</div>
+          <div class="pipe-node"><strong>load_skill</strong>加载正文</div>
+          <div class="pipe-node"><strong>check_cancel</strong>取消边界</div>
+          <div class="pipe-node"><strong>execute</strong>三选一工作流</div>
+          <div class="pipe-node"><strong>verify</strong>验证结果</div>
+          <div class="pipe-node"><strong>retry / finish</strong>一次重试或终止</div>
+        </div>
+
+        <h3>三种工作流分别做什么</h3>
+        <div class="cards">
+          <article class="card">
+            <span class="kicker">Regulation QA</span>
+            <h4>法规问答</h4>
+            <p>搜索证据 → 编号 → 生成回答 → 验证每个事实句。首次引用失败可用同一批证据修复答案。</p>
+          </article>
+          <article class="card">
+            <span class="kicker">Comparison</span>
+            <h4>条款比较</h4>
+            <p>模型先规划左右来源；精确定位足够时调用 get_clause，否则分别检索两侧。缺任意一侧就拒答。</p>
+          </article>
+          <article class="card">
+            <span class="kicker">Gap Analysis</span>
+            <h4>控制差距</h4>
+            <p>从 control_text 提取事实 → 检索要求 → 映射 aligned/partial/gap/unknown → 要求人工确认。</p>
+          </article>
+        </div>
+
+        <h3>为什么只允许重试一次</h3>
+        <p>
+          没有上限的 Agent 循环可能重复烧 Token、反复调用工具，甚至永远无法终止。
+          当前 Graph 的策略是：第一次验证失败时，法规问答优先修复引用；其他失败可重写检索 query。
+          第二次仍失败就拒答。Graph 还设置 recursion_limit=16，形成双重上限。
+        </p>
+
+        <div class="callout">
+          <strong>工程理解</strong>
+          LangGraph 在这里不是为了“显得 Agent 化”，而是把本来散落在 if/else 中的生命周期变成可测试的状态机。
+        </div>
+      </section>
+
+      <section class="section" id="skills">
+        <div class="section-header">
+          <div class="section-number">07</div>
+          <div>
+            <h2>渐进式 Skills 是什么</h2>
+            <p class="section-subtitle">先只看目录，选中后才加载完整 SOP。</p>
+          </div>
+        </div>
+
+        <h3>一个 Skill 包含两层信息</h3>
+        <div class="split-view">
+          <div class="box">
+            <h4>Frontmatter：轻量目录</h4>
+            <pre><code>name: regulation-qa
+description: 何时使用、何时不使用</code></pre>
+            <p>启动时读取，供系统选择；不加载大量正文。</p>
+          </div>
+          <div class="box">
+            <h4>Body：完整工作方法</h4>
+            <p>包含 Required inputs、Workflow、Evidence rules、Output、Boundary and refusal。</p>
+            <p>只在匹配当前任务后读取。</p>
+          </div>
+        </div>
+
+        <h3>渐进式加载过程</h3>
+        <div class="pipeline">
+          <div class="pipe-node"><strong>Discover</strong>扫描 */SKILL.md</div>
+          <div class="pipe-node"><strong>Catalog</strong>只存名称与描述</div>
+          <div class="pipe-node"><strong>Match</strong>intent → skill</div>
+          <div class="pipe-node"><strong>Load</strong>读取一份正文</div>
+          <div class="pipe-node"><strong>Inject</strong>加入 system prompt</div>
+        </div>
+
+        <h3>为什么不一次加载全部 Skill</h3>
+        <ul>
+          <li>浪费上下文：三个 SOP 都会占 prompt token。</li>
+          <li>产生冲突：比较、问答和 gap analysis 的输出规则不同。</li>
+          <li>误触发：不支持的请求也可能收到不相关领域指令。</li>
+          <li>可观察性差：很难判断哪份说明真正影响了答案。</li>
+        </ul>
+
+        <div class="callout warning">
+          <strong>不要神化 Skills</strong>
+          当前 Skills 本质上是结构化 Prompt SOP，加上安全的发现与按需加载器。
+          它不等于模型训练，也不是模型自动学习了新能力。
+        </div>
+      </section>
+
+      <section class="section" id="tools">
+        <div class="section-header">
+          <div class="section-number">08</div>
+          <div>
+            <h2>Tools 与 MCP</h2>
+            <p class="section-subtitle">把可确定执行的能力从 LLM 中拆出来。</p>
+          </div>
+        </div>
+
+        <h3>三个领域工具</h3>
+        <div class="cards">
+          <article class="card"><span class="kicker">Search</span><h4>search_regulation</h4><p>按 query 搜索证据，可限制 source_ids。</p></article>
+          <article class="card"><span class="kicker">Lookup</span><h4>get_clause</h4><p>用 source_id、version、section_number 精确查一个父条款。</p></article>
+          <article class="card"><span class="kicker">Compare</span><h4>compare_clauses</h4><p>分别精确查左右两侧，保持两侧 Evidence 不混合。</p></article>
+        </div>
+
+        <h3>为什么 get_clause 不需要 LLM</h3>
+        <p>
+          如果用户已经给出完整定位符，最安全的行为是精确查字典，而不是让模型“理解一下大概是哪条”。
+          工程上应遵守：能用确定性逻辑完成的步骤，不交给概率模型。
+        </p>
+
+        <h3>Local 与 MCP 后端</h3>
+        <div class="split-view">
+          <div class="box">
+            <h4>LocalToolBackend</h4>
+            <p>同一 Python 进程直接调用函数，默认部署使用，延迟低，调试简单。</p>
+          </div>
+          <div class="box">
+            <h4>MCPToolBackend</h4>
+            <p>通过标准 MCP 协议调用相同工具，便于被外部 Agent 客户端使用，并返回结构化错误。</p>
+          </div>
+        </div>
+
+        <p>
+          <code>mcp_server/server.py</code> 用 Pydantic 定义输入输出，标记工具只读、幂等、非破坏性。
+          <code>agent/tools.py</code> 再把 MCP 响应适配回 AgentToolBackend 接口。
+        </p>
+
+        <div class="callout warning">
+          <strong>当前 MCP 的工程边界</strong>
+          默认 stdio caller 每次工具调用都会建立短生命周期会话，不适合高并发生产环境；真实 API 默认也仍使用 LocalToolBackend。
+        </div>
+      </section>
+
+      <section class="section" id="validation">
+        <div class="section-header">
+          <div class="section-number">09</div>
+          <div>
+            <h2>生成、引用校验与安全边界</h2>
+            <p class="section-subtitle">“带引用”不等于“引用正确”。</p>
+          </div>
+        </div>
+
+        <h3>证据怎样进入 Prompt</h3>
+        <p>每条 Evidence 先被编号，并且正文中的 HTML 边界字符会被转义：</p>
+        <div class="code-wrap">
+          <button class="copy-button" type="button">复制</button>
+          <pre><code>[1] parent_id=GBT-22239@2019#7.1.4.1
+source_id=GBT-22239
+version=2019
+section_number=7.1.4.1
+&lt;evidence&gt;
+完整法规条文……
+&lt;/evidence&gt;</code></pre>
+        </div>
+        <p>
+          如果法规正文中恶意包含 <code>&lt;/evidence&gt;</code> 和“忽略系统指令”，转义后也不能提前关闭外层证据容器。
+          这是一种文档 Prompt Injection 缓解措施，但不是完整安全证明。
+        </p>
+
+        <h3>引用验证分两层</h3>
+        <div class="split-view">
+          <div class="box">
+            <h4>确定性检查</h4>
+            <ul>
+              <li>引用编号是否存在</li>
+              <li>parent_id 中的版本是否等于 evidence.version</li>
+              <li>事实声明是否完全没有引用</li>
+            </ul>
+          </div>
+          <div class="box">
+            <h4>语义检查</h4>
+            <ul>
+              <li>被引用证据是否直接支持 claim</li>
+              <li>claim 是否比证据范围更宽</li>
+              <li>多证据联合是否真正支持比较结论</li>
+            </ul>
+          </div>
+        </div>
+
+        <h3>一个校验例子</h3>
+        <div class="cards">
+          <article class="card">
+            <span class="kicker">Pass</span>
+            <h4>“应定期更换鉴别信息[1]”</h4>
+            <p>证据明确包含“定期更换”，引用编号也有效。</p>
+          </article>
+          <article class="card">
+            <span class="kicker">Fail</span>
+            <h4>“管理员必须每天换密码[1]”</h4>
+            <p>证据只说定期，没有“每天”，属于 materially broader。</p>
+          </article>
+          <article class="card">
+            <span class="kicker">Fail</span>
+            <h4>“管理员必须每天换密码”</h4>
+            <p>没有任何编号引用，先在确定性层失败。</p>
+          </article>
+        </div>
+
+        <h3>为什么语义校验仍不可靠</h3>
+        <p>
+          当前语义判定仍由 LLM 完成，通常与生成模型来自同一端点。它比完全不检查好，但不是独立的事实证明。
+          更强方案包括独立 NLI 模型、规则校验、人工抽检、多评委一致性以及针对业务字段的确定性验证。
+        </p>
+      </section>
+
+      <section class="section" id="api">
+        <div class="section-header">
+          <div class="section-number">10</div>
+          <div>
+            <h2>API、SSE、任务与前端</h2>
+            <p class="section-subtitle">把同步、耗时的 Agent 工作包装成用户可观察的服务。</p>
+          </div>
+        </div>
+
+        <h3>为什么用 SSE</h3>
+        <p>
+          浏览器只需要服务器单向推送事件，SSE 比 WebSocket 更简单；事件是文本协议，天然适合 token 流、引用和 Trace。
+          后端定义七种事件：status、text、reference、recommendation、trace、done、error。
+        </p>
+
+        <div class="pipeline">
+          <div class="pipe-node"><strong>POST /chat</strong>创建请求</div>
+          <div class="pipe-node"><strong>TaskManager</strong>注册任务</div>
+          <div class="pipe-node"><strong>Worker Thread</strong>运行 Graph</div>
+          <div class="pipe-node"><strong>Queue</strong>跨线程投递事件</div>
+          <div class="pipe-node"><strong>SSE</strong>逐帧编码</div>
+          <div class="pipe-node"><strong>Browser</strong>增量渲染</div>
+        </div>
+
+        <h3>中间状态为什么能提前展示证据</h3>
+        <p>
+          <code>RealAgentRunner.run_streaming</code> 使用 LangGraph 的 <code>stream_mode="values"</code>。
+          每得到一个新状态，就让 emitter 比较 evidence 和 trace 是否增加；新证据不必等最终答案结束才能显示。
+        </p>
+
+        <h3>前端没有框架，仍然做了什么</h3>
+        <ul>
+          <li>自己实现可处理碎片化 CRLF frame 的 SSE parser。</li>
+          <li>按 request_id 隔离旧请求和新请求事件。</li>
+          <li>忽略终态之后到达的迟到事件。</li>
+          <li>用 textContent 和 DOM 节点渲染 Markdown，避免直接 innerHTML 注入。</li>
+          <li>让答案中的 [1] 成为按钮，可以定位右侧证据卡片。</li>
+          <li>Trace 只展示白名单字段，不泄漏完整 Prompt、Skill 或隐藏推理。</li>
+        </ul>
+      </section>
+
+      <section class="section" id="testing">
+        <div class="section-header">
+          <div class="section-number">11</div>
+          <div>
+            <h2>测试到底怎么测</h2>
+            <p class="section-subtitle">测试重点不是调用真实大模型，而是验证工程合同。</p>
+          </div>
+        </div>
+
+        <div class="callout">
+          <strong>当前结果</strong>
+          本机包含未提交测试时是 302 passed；只运行 Git 已跟踪测试是 301 passed。
+          这也说明测试数字必须在 clean clone 中复现，不能只看本机输出。
+        </div>
+
+        <h3>为什么大量使用 Fake 和依赖注入</h3>
+        <p>
+          真实 embedding、Qdrant 和远程 LLM 又慢、又贵、还可能波动。
+          单元测试把它们替换成可预测的 fake，专门检查“如果依赖返回这些值，业务逻辑是否正确”。
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>测试层</th><th>典型文件</th><th>主要证明</th><th>不能证明</th></tr></thead>
+            <tbody>
+              <tr><td>纯函数</td><td>test_chunk.py / test_metrics.py</td><td>窗口、重叠、指标数学正确</td><td>真实检索质量</td></tr>
+              <tr><td>Schema</td><td>test_schema.py / test_eval_schema.py</td><td>非法字段、版本 ID 被拒绝</td><td>法规内容正确</td></tr>
+              <tr><td>Graph</td><td>test_agent_graph.py</td><td>分支、重试、取消边界、终态</td><td>真实 LLM 能否稳定遵守 Prompt</td></tr>
+              <tr><td>工具协议</td><td>test_agent_tools.py / test_mcp_server.py</td><td>Local/MCP 返回相同领域结构</td><td>MCP 高并发性能</td></tr>
+              <tr><td>API 契约</td><td>test_api.py</td><td>SSE 顺序、终态、断连、任务清理</td><td>工作线程真正被中断</td></tr>
+              <tr><td>部署组合</td><td>test_deployment.py</td><td>demo/real 模式选择与 readiness</td><td>真实 Docker 环境可启动</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>一个典型 Graph 测试怎样写</h3>
+        <div class="code-wrap">
+          <button class="copy-button" type="button">复制</button>
+          <pre><code>Arrange：注入 FakeTools、FakeLLM、FakeCancellationChecker
+Act：     graph.invoke(initial_state)
+Assert：  tool_calls 数量正确
+         trace 节点顺序正确
+         retry_count 不超过 1
+         final_status 等于 refused / completed / cancelled</code></pre>
+        </div>
+
+        <h3>怎样理解“302 个测试都过了”</h3>
+        <p>
+          它说明实现满足作者写下的合同，没有明显回归；它不说明答案语义正确率达到生产要求。
+          测试回答的是“代码有没有按设计工作”，评测回答的是“这个设计实际效果怎么样”。
+        </p>
+
+        <details class="quiz">
+          <summary>自测：为什么不能把评测集 60 条都写成单元测试并宣布效果稳定？</summary>
+          <div>
+            因为远程模型和真实检索包含概率性与环境依赖。把输出硬编码成单测只会验证旧输出没有变化，
+            不能判断新答案是否同样正确。质量评测需要指标、冻结配置、失败保留和人工复核。
+          </div>
+        </details>
+      </section>
+
+      <section class="section" id="evaluation">
+        <div class="section-header">
+          <div class="section-number">12</div>
+          <div>
+            <h2>评测数据与指标怎么读</h2>
+            <p class="section-subtitle">先分清检索指标、生成指标和系统指标。</p>
+          </div>
+        </div>
+
+        <h3>60 条数据集包含什么</h3>
+        <div class="metric-grid">
+          <div class="metric"><strong>29</strong><span>法规问答</span></div>
+          <div class="metric"><strong>12</strong><span>条款比较</span></div>
+          <div class="metric"><strong>6</strong><span>控制差距</span></div>
+          <div class="metric"><strong>13</strong><span>应拒答请求</span></div>
+        </div>
+        <p>
+          每条 case 有 question、task_type、gold_points、gold_citations、should_refuse、source_versions 和 tags。
+          Gold 字段只允许评分器看到，不能提前泄漏给正式路由与回答模型。
+        </p>
+
+        <h3>核心指标手算</h3>
+        <div class="cards">
+          <article class="card">
+            <span class="kicker">Retrieval</span>
+            <h4>Recall@5</h4>
+            <p>一道题有两个 gold 条款，前五找到一个：Recall@5 = 1/2 = 0.5。</p>
+          </article>
+          <article class="card">
+            <span class="kicker">Ranking</span>
+            <h4>MRR</h4>
+            <p>第一个相关条款排第 4：RR = 1/4；所有题 RR 平均得到 MRR。</p>
+          </article>
+          <article class="card">
+            <span class="kicker">Answer</span>
+            <h4>Citation Precision</h4>
+            <p>答案引用 4 个父条款，2 个属于 gold：precision = 2/4。</p>
+          </article>
+          <article class="card">
+            <span class="kicker">Answer</span>
+            <h4>Citation Coverage</h4>
+            <p>Gold 有 2 个，答案只用了 1 个：coverage = 1/2。</p>
+          </article>
+        </div>
+
+        <h3>最后一次已保存的全量评测</h3>
+        <div class="metric-grid">
+          <div class="metric"><strong>79.79%</strong><span>Recall@5</span></div>
+          <div class="metric"><strong>85.11%</strong><span>Recall@20</span></div>
+          <div class="metric"><strong>36.70%</strong><span>Citation Precision</span></div>
+          <div class="metric"><strong>85.00%</strong><span>Refusal Accuracy</span></div>
+        </div>
+
+        <div class="callout danger">
+          <strong>这组数字不能直接代表当前生产 Graph</strong>
+          报告使用旧 commit、dirty 工作区和独立评测流水线生成；之后代码加入了新的引用修复与真实运行时。
+          当前代码没有在干净 commit 上用完全一致的生产 Graph 重跑，所以既不能假设已经修好，也不能把 36.70% 当作当前上限。
+        </div>
+
+        <h3>Gold citation 指标的局限</h3>
+        <p>
+          如果答案引用了一个真实相关、但标注者没有放进 gold 的条款，它也会被计为 false positive。
+          因此 citation precision 不是纯粹的“事实正确率”。但 36.70% 仍是明显警报，因为失败分析确实发现了引用相似但错误安全等级条款的案例。
+        </p>
+      </section>
+
+      <section class="section" id="tuning">
+        <div class="section-header">
+          <div class="section-number">13</div>
+          <div>
+            <h2>消融实验与调优决策</h2>
+            <p class="section-subtitle">调优不是凭感觉改参数，而是一次只改变可解释变量。</p>
+          </div>
+        </div>
+
+        <h3>检索消融：2 × 2 × 2</h3>
+        <p>三个二元开关组成八组：固定窗口/父子切分、Dense/Hybrid、无 Rerank/有 Rerank。</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>切分</th><th>Sparse</th><th>Rerank</th><th>Recall@5</th><th>MRR</th><th>P95 ms</th></tr></thead>
+            <tbody>
+              <tr><td>fixed_window</td><td>否</td><td>否</td><td>0.5000</td><td>0.3807</td><td>42.69</td></tr>
+              <tr><td>fixed_window</td><td>否</td><td>是</td><td>0.6064</td><td>0.4628</td><td>239.90</td></tr>
+              <tr><td>fixed_window</td><td>是</td><td>否</td><td>0.5532</td><td>0.4090</td><td>46.69</td></tr>
+              <tr><td>fixed_window</td><td>是</td><td>是</td><td>0.6809</td><td>0.5397</td><td>238.40</td></tr>
+              <tr><td>parent_child</td><td>否</td><td>否</td><td>0.6915</td><td>0.5673</td><td>39.80</td></tr>
+              <tr class="selected"><td>parent_child</td><td>否</td><td>是</td><td>0.8191</td><td>0.7365</td><td>243.46</td></tr>
+              <tr><td>parent_child</td><td>是</td><td>否</td><td>0.6809</td><td>0.6330</td><td>45.07</td></tr>
+              <tr><td>parent_child</td><td>是</td><td>是</td><td>0.8085</td><td>0.7110</td><td>242.43</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>怎样从表里得出结论</h3>
+        <ul>
+          <li><strong>父子切分贡献最大：</strong>同为 Dense、无 Rerank，Recall@5 从 0.5000 到 0.6915。</li>
+          <li><strong>Rerank 有质量收益：</strong>父子 Dense 从 0.6915 到 0.8191，但 P95 增加约 204 ms。</li>
+          <li><strong>Sparse 在当前集合没有整体收益：</strong>父子 + Rerank 加 Sparse 后反而小幅下降。</li>
+          <li><strong>最终选择：</strong>先最大化 Recall@5，再看 MRR，最后考虑延迟，所以选父子 Dense + Rerank。</li>
+        </ul>
+
+        <h3>Skill 消融：none / full / progressive</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>策略</th><th>样例</th><th>平均输入 Token</th><th>结构成功率</th><th>误触发率</th><th>漏触发率</th></tr></thead>
+            <tbody>
+              <tr><td>none</td><td>12</td><td>398.42</td><td>58.33%</td><td>0%</td><td>100%</td></tr>
+              <tr><td>full</td><td>12</td><td>1922.42</td><td>75.00%</td><td>100%</td><td>0%</td></tr>
+              <tr class="selected"><td>progressive</td><td>12</td><td>779.42</td><td>91.67%</td><td>0%</td><td>0%</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Progressive 相比 Full 把平均输入 Token 降低 59.46%，同时这 12 条受控样例的结构成功率更高。
+          但实验直接提供 gold evidence，只隔离 Skill 注入策略，不证明真实检索链路也有同样成功率。
+        </p>
+
+        <h3>一次失败的调优也有价值</h3>
+        <p>
+          最终评测曾尝试把 generation_context_k 从 5 减到 3，希望减少错误引用。
+          Citation precision 只增加约 0.18 个百分点，coverage 却下降约 10.64 个百分点，因此拒绝该配置。
+          调优的目标不是“必须找到一个更好数字”，而是保留能解释的负结果。
+        </p>
+
+        <div class="callout">
+          <strong>调优方法模板</strong>
+          先定义最弱指标 → 提出一个只改变一个变量的假设 → 固定数据、模型和其他参数 →
+          运行完整样例 → 同时看收益与代价 → 接受或拒绝 → 保留失败案例。
+        </div>
+      </section>
+
+      <section class="section" id="limitations">
+        <div class="section-header">
+          <div class="section-number">14</div>
+          <div>
+            <h2>真实缺陷与工程边界</h2>
+            <p class="section-subtitle">真正理解项目，必须能解释它哪里还不成立。</p>
+          </div>
+        </div>
+
+        <div class="cards">
+          <article class="card">
+            <span class="kicker">Runtime</span>
+            <h4>任务停止不等于终止推理</h4>
+            <p>取消 asyncio 外层任务不会终止 to_thread 中已经运行的模型调用。</p>
+          </article>
+          <article class="card">
+            <span class="kicker">Agent</span>
+            <h4>生产运行时不是自主路由</h4>
+            <p>前端 mode 固定 Graph；最终评测中的 LLM router 与生产 API 不是同一条链。</p>
+          </article>
+          <article class="card">
+            <span class="kicker">Validation</span>
+            <h4>Gap 校验不够深</h4>
+            <p>主要检查 evidence 非空、人工确认和少量黑名单，没有逐行验证 requirement 与 current_state。</p>
+          </article>
+          <article class="card">
+            <span class="kicker">Index</span>
+            <h4>索引没有版本迁移</h4>
+            <p>启动只检查 collection 非空，不比较语料 hash、模型版本和索引 schema。</p>
+          </article>
+          <article class="card">
+            <span class="kicker">Evaluation</span>
+            <h4>评测与生产 Graph 分离</h4>
+            <p>旧报告绕过当前 Graph 校验和修复逻辑，不能证明最新端到端质量。</p>
+          </article>
+          <article class="card">
+            <span class="kicker">Repository</span>
+            <h4>公开证据不完整</h4>
+            <p>本地 results/docs 被忽略，README 的 302 tests 依赖一个未提交测试。</p>
+          </article>
+        </div>
+
+        <h3>如果要接近生产级，改进顺序</h3>
+        <ol>
+          <li>先让 GitHub clean clone 可以复现测试、评测与 README 数字。</li>
+          <li>让最终评测直接调用当前生产 Graph，并冻结干净 commit。</li>
+          <li>逐行验证 gap requirement、current_state、classification 和 evidence。</li>
+          <li>传播真正的 cancellation token，并能停止或关闭模型流。</li>
+          <li>为索引增加 corpus hash、embedding model version 和原子切换。</li>
+          <li>增加 CI、Docker 集成 smoke、限流、认证、并发和持久化观测。</li>
+        </ol>
+      </section>
+
+      <section class="section" id="practice">
+        <div class="section-header">
+          <div class="section-number">15</div>
+          <div>
+            <h2>动手学习路线</h2>
+            <p class="section-subtitle">不要一次读完两万行；每一步都带一个可观察目标。</p>
+          </div>
+        </div>
+
+        <ol class="step-list">
+          <li>
+            <h3>跑纯逻辑测试</h3>
+            <p>先看切分和指标，理解无外部服务的部分。</p>
+            <div class="code-wrap"><button class="copy-button" type="button">复制</button><pre><code>uv run pytest tests/test_chunk.py tests/test_metrics.py -q</code></pre></div>
+          </li>
+          <li>
+            <h3>观察父子数据</h3>
+            <p>打开 <code>data/parsed/_parents_store.json</code>，搜索一个 parent_id，再回看对应 Markdown。</p>
+          </li>
+          <li>
+            <h3>读检索流水线</h3>
+            <p>按 types → dense → rerank → retrieve 的顺序，手写一张“输入/输出类型”表。</p>
+          </li>
+          <li>
+            <h3>跑一个 Graph 测试</h3>
+            <p>在 test_agent_graph.py 选一个 regulation_qa 测试，跟踪 FakeTools 返回的 Evidence 怎样进入最终状态。</p>
+          </li>
+          <li>
+            <h3>启动离线 Demo</h3>
+            <div class="code-wrap"><button class="copy-button" type="button">复制</button><pre><code>$env:APP_RUN_MODE="demo"
+uv run python -m api.serve
+# 浏览器打开 http://127.0.0.1:8000</code></pre></div>
+          </li>
+          <li>
+            <h3>检查评测集</h3>
+            <div class="code-wrap"><button class="copy-button" type="button">复制</button><pre><code>uv run python -m evals.validate_dataset evals/dataset.jsonl</code></pre></div>
+          </li>
+          <li>
+            <h3>解释一个失败案例</h3>
+            <p>从 results/failures.md 选一题，依次回答：路由错了吗、检索找到了吗、生成引用对了吗、拒答状态对了吗。</p>
+          </li>
+        </ol>
+
+        <h3>每读一个模块，都问四个问题</h3>
+        <div class="cards">
+          <article class="card"><span class="kicker">Contract</span><h4>输入输出是什么？</h4><p>看 TypedDict、dataclass、Pydantic model 和函数签名。</p></article>
+          <article class="card"><span class="kicker">Boundary</span><h4>什么情况下拒绝？</h4><p>空证据、版本冲突、缺控制文本、依赖失败分别怎样处理。</p></article>
+          <article class="card"><span class="kicker">Test</span><h4>哪个测试证明它？</h4><p>不要只看注释；找到能让实现失败的断言。</p></article>
+          <article class="card"><span class="kicker">Tradeoff</span><h4>代价是什么？</h4><p>质量、延迟、Token、复杂度和维护成本之间怎样取舍。</p></article>
+        </div>
+      </section>
+
+      <section class="section" id="interview">
+        <div class="section-header">
+          <div class="section-number">16</div>
+          <div>
+            <h2>面试复述框架</h2>
+            <p class="section-subtitle">按“问题—设计—证据—边界”讲，而不是报技术名词。</p>
+          </div>
+        </div>
+
+        <h3>90 秒项目介绍</h3>
+        <div class="callout">
+          我做了一个证据优先的 GRC 合规工作流 Agent，重点不是让模型回答得像专家，
+          而是让法规结论能追溯到具体来源、版本和条款。语料侧使用父子分块：
+          短子块做 BGE-M3 检索，命中后返回完整父条款，再由 Reranker 精排。
+          Agent 侧用 LangGraph 编排法规问答、条款比较和控制差距分析，并在生成后检查引用编号、
+          版本和语义支持，失败最多修复一次。服务侧用 FastAPI 和 SSE 分别流式展示回答、证据和安全 Trace。
+          我还构建了 60 条评测集和八组检索消融，父子 Dense + Rerank 的 Recall@5 为 81.91%。
+          当前主要不足是引用精度、真实取消和评测与生产 Graph 尚未完全统一。
+        </div>
+
+        <h3>高频追问与回答方向</h3>
+        <details>
+          <summary>为什么用父子分块，不直接固定窗口？</summary>
+          <div>短块提高语义召回，完整父条款保留前提与例外；同配置消融中 Recall@5 从 50.00% 提升到 69.15%。</div>
+        </details>
+        <details>
+          <summary>为什么实现了 BM25 却没默认开启？</summary>
+          <div>在当前 60 条集合和中文语料上，父子 Hybrid + Rerank 的整体 Recall@5/MRR 低于父子 Dense + Rerank，所以依据消融关闭，而不是依据组件数量。</div>
+        </details>
+        <details>
+          <summary>你的 Agent 到底自主在哪里？</summary>
+          <div>生产运行时是用户选择受控工作流，模型只在比较规划、控制提取、生成和语义判断中参与；这是为了降低合规场景的不可预测性，不应包装成通用自主 Agent。</div>
+        </details>
+        <details>
+          <summary>302 个测试为什么不能证明质量？</summary>
+          <div>测试主要验证状态机、协议和边界合同，真实答案质量由 60 条评测和人工失败分析衡量；两者解决不同问题。</div>
+        </details>
+        <details>
+          <summary>项目最危险的失败是什么？</summary>
+          <div>不是明确拒答，而是引用了内容相似但安全等级错误的条款，答案看起来专业且有引用，用户更容易误信。</div>
+        </details>
+        <details>
+          <summary>如果再做一周，优先修什么？</summary>
+          <div>先统一生产 Graph 与评测器并在干净 commit 重跑，再做 gap 逐行语义验证和真正的模型取消，最后补索引版本化与 Docker 集成 CI。</div>
+        </details>
+
+        <div class="callout danger">
+          <strong>面试原则</strong>
+          你可以承认项目大量借助 AI 完成，但必须能解释每个关键选择、复现数字、指出缺陷，并现场沿着一条请求定位代码。
+          不理解却背结论，比直接承认还没掌握更危险。
+        </div>
+      </section>
+
+      <section class="section" id="glossary">
+        <div class="section-header">
+          <div class="section-number">17</div>
+          <div>
+            <h2>项目术语速查</h2>
+            <p class="section-subtitle">忘记名词时回来查，不需要死记。</p>
+          </div>
+        </div>
+
+        <dl class="glossary">
+          <div><dt>Parent Section</dt><dd>完整可引用法规章节，保存在 JSON store。</dd></div>
+          <div><dt>Child Chunk</dt><dd>父章节内部用于 embedding 和向量搜索的短块。</dd></div>
+          <div><dt>Dense Retrieval</dt><dd>基于 embedding 向量相似度的语义检索。</dd></div>
+          <div><dt>Sparse Retrieval</dt><dd>基于词频和逆文档频率的 BM25 检索。</dd></div>
+          <div><dt>RRF</dt><dd>Reciprocal Rank Fusion，用排名倒数融合多路候选。</dd></div>
+          <div><dt>Reranker</dt><dd>同时阅读 query 和 document，重新计算相关性。</dd></div>
+          <div><dt>Evidence</dt><dd>带来源、版本、条款号、正文和分数的稳定结构。</dd></div>
+          <div><dt>AgentState</dt><dd>LangGraph 所有节点共享并逐步更新的数据合同。</dd></div>
+          <div><dt>Progressive Skill</dt><dd>先暴露轻量目录，匹配后只加载一份完整 SOP。</dd></div>
+          <div><dt>Entailment</dt><dd>判断证据是否直接支持某个回答声明。</dd></div>
+          <div><dt>Recall@K</dt><dd>前 K 个检索结果覆盖了多少 Gold 证据。</dd></div>
+          <div><dt>MRR</dt><dd>第一个相关结果排名倒数的平均值。</dd></div>
+          <div><dt>Citation Precision</dt><dd>答案引用中有多少属于标注 Gold。</dd></div>
+          <div><dt>Citation Coverage</dt><dd>Gold 引用中有多少被答案实际使用。</dd></div>
+          <div><dt>SSE</dt><dd>服务器向浏览器单向推送文本事件的 HTTP 协议。</dd></div>
+          <div><dt>MCP</dt><dd>让 Agent 客户端以统一协议发现和调用工具。</dd></div>
+        </dl>
+      </section>
+
+      <footer class="footer">
+        <p>建议阅读方式：先通读 01–03，再按 04–13 逐章运行对应测试，最后用 14–16 检查自己是否真的理解。</p>
+        <p>本页面依据当前工作区代码与本地评测产物生成，不把作品集系统描述成生产级系统。</p>
+      </footer>
+    </main>
+  </div>
+
+  <button class="back-top" id="back-top" type="button" aria-label="回到顶部">↑</button>
+
+  <script>
+    (function () {
+      "use strict";
+
+      var root = document.documentElement;
+      var body = document.body;
+      var progress = document.getElementById("progress-bar");
+      var backTop = document.getElementById("back-top");
+      var menuButton = document.getElementById("menu-button");
+      var navLinks = Array.from(document.querySelectorAll("#nav a"));
+      var sections = navLinks
+        .map(function (link) { return document.querySelector(link.getAttribute("href")); })
+        .filter(Boolean);
+
+      function preferredTheme() {
+        var saved = localStorage.getItem("grc-guide-theme");
+        if (saved === "dark" || saved === "light") return saved;
+        return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+
+      function setTheme(theme) {
+        root.dataset.theme = theme;
+        localStorage.setItem("grc-guide-theme", theme);
+      }
+
+      function toggleTheme() {
+        setTheme(root.dataset.theme === "dark" ? "light" : "dark");
+      }
+
+      setTheme(preferredTheme());
+      document.getElementById("theme-button").addEventListener("click", toggleTheme);
+      document.getElementById("mobile-theme").addEventListener("click", toggleTheme);
+      document.getElementById("print-button").addEventListener("click", function () {
+        window.print();
+      });
+
+      menuButton.addEventListener("click", function () {
+        body.classList.toggle("nav-open");
+      });
+      navLinks.forEach(function (link) {
+        link.addEventListener("click", function () {
+          body.classList.remove("nav-open");
+        });
+      });
+
+      function updateScrollUI() {
+        var scrollTop = window.scrollY;
+        var height = document.documentElement.scrollHeight - window.innerHeight;
+        var percent = height > 0 ? Math.min(100, (scrollTop / height) * 100) : 0;
+        progress.style.width = percent.toFixed(2) + "%";
+        backTop.classList.toggle("visible", scrollTop > 700);
+      }
+      window.addEventListener("scroll", updateScrollUI, { passive: true });
+      updateScrollUI();
+
+      backTop.addEventListener("click", function () {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      });
+
+      var observer = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (!entry.isIntersecting) return;
+          navLinks.forEach(function (link) {
+            link.classList.toggle(
+              "active",
+              link.getAttribute("href") === "#" + entry.target.id
+            );
+          });
+        });
+      }, { rootMargin: "-18% 0px -68% 0px", threshold: 0 });
+      sections.forEach(function (section) { observer.observe(section); });
+
+      document.addEventListener("click", function (event) {
+        var button = event.target.closest(".copy-button");
+        if (!button) return;
+        var pre = button.parentElement.querySelector("pre");
+        if (!pre) return;
+        navigator.clipboard.writeText(pre.innerText).then(function () {
+          var original = button.textContent;
+          button.textContent = "已复制";
+          window.setTimeout(function () { button.textContent = original; }, 1200);
+        }).catch(function () {
+          button.textContent = "复制失败";
+        });
+      });
+
+      document.addEventListener("keydown", function (event) {
+        if (event.key === "Escape") body.classList.remove("nav-open");
+      });
+    }());
+  </script>
+</body>
+</html>

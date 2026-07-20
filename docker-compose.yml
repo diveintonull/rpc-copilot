@@ -13,12 +13,16 @@ services:
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_BASE_URL: ${LLM_BASE_URL:-}
       LLM_MODEL: ${LLM_MODEL:-}
+      LLM_VISION_MODEL: ${LLM_VISION_MODEL:-}
       LLM_VALIDATE_ENTAILMENT: ${LLM_VALIDATE_ENTAILMENT:-true}
+      MULTIMODAL_RAG_ENABLED: ${MULTIMODAL_RAG_ENABLED:-false}
+      VISUAL_MODEL: ${VISUAL_MODEL:-vidore/colqwen2-v1.0-hf}
       QDRANT_URL: http://qdrant:6333
     ports:
       - "127.0.0.1:${APP_HOST_PORT:-8000}:8000"
     volumes:
       - model_cache:/home/app/.cache
+      - visual_pages:/app/data/visual
     depends_on:
       qdrant:
         condition: service_healthy
@@ -61,3 +65,4 @@ services:
 volumes:
   model_cache:
   qdrant_storage:
+  visual_pages:

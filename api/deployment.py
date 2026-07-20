@@ -13,6 +13,8 @@ from dotenv import load_dotenv
 from api.main import ChatRequest, ReadinessProbe, create_app
 from api.real_runtime import build_real_runner
 from ingest.index import COLLECTION, PARENTS_STORE
+from ingest.visual import VISUAL_MANIFEST
+from rag.visual import VISUAL_COLLECTION
 
 
 DEFAULT_QDRANT_URL = "http://localhost:6333"
@@ -189,7 +191,21 @@ async def real_dependencies_ready() -> bool:
         try:
             if not client.collection_exists(COLLECTION):
                 return False
-            return client.count(COLLECTION, exact=False).count > 0
+            if client.count(COLLECTION, exact=False).count <= 0:
+                return False
+            multimodal = (
+                os.environ.get("MULTIMODAL_RAG_ENABLED", "false")
+                .strip()
+                .casefold()
+                == "true"
+            )
+            if not multimodal:
+                return True
+            return (
+                VISUAL_MANIFEST.is_file()
+                and client.collection_exists(VISUAL_COLLECTION)
+                and client.count(VISUAL_COLLECTION, exact=False).count > 0
+            )
         finally:
             client.close()
 

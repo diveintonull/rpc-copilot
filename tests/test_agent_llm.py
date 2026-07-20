@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -89,6 +90,45 @@ def test_answer_regulation_sends_real_evidence_and_returns_model_text() -> None:
     assert "Required output language: Simplified Chinese" in system
     assert system.rfind("Required output language") > system.rfind(
         "workflow_instructions"
+    )
+
+
+def test_answer_regulation_sends_rendered_page_to_vision_model(
+    tmp_path: Path,
+) -> None:
+    from PIL import Image
+
+    image_path = tmp_path / "page.png"
+    Image.new("RGB", (20, 30), "white").save(image_path)
+    client = FakeClient(["页面要求启用身份鉴别[1]"])
+    llm = OpenAICompatibleAgentLLM(
+        api_key="test-key",
+        model="text-model",
+        vision_model="vision-model",
+        vision_image_root=tmp_path,
+        client=client,
+    )
+    page_evidence = {
+        **evidence(),
+        "parent_id": "GBT-22239@2019#page=12",
+        "section_number": "page 12",
+        "modality": "image",
+        "page_number": 12,
+        "image_path": str(image_path),
+    }
+
+    answer = llm.answer_regulation("图中的表格有什么要求？", [page_evidence])
+
+    assert answer == "页面要求启用身份鉴别[1]"
+    request = client.completions.requests[0]
+    assert request["model"] == "vision-model"
+    content = request["messages"][1]["content"]
+    assert isinstance(content, list)
+    assert content[0]["type"] == "text"
+    assert "modality=image" in content[0]["text"]
+    assert content[-1]["type"] == "image_url"
+    assert content[-1]["image_url"]["url"].startswith(
+        "data:image/jpeg;base64,"
     )
 
 
